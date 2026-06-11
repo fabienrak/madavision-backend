@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: madavision-backend
+    env: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: AIRTABLE_PAT
+        sync: false
+      - key: AIRTABLE_BASE
+        value: appZPM85bUqAmWde2
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DEBUG
+        value: "false"

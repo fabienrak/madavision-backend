@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Espace Exposant — FIM 2026</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+:root{
+  --blue:#2260A7;--blue-lt:rgba(34,96,167,.08);--blue-mid:rgba(34,96,167,.18);
+  --grey:#7A8891;--noir:#030304;
+  --green:#1E7F54;--green-lt:#E8F7EF;
+  --amber:#C87B2F;--amber-lt:#FEF3E8;
+  --red:#C0392B;--red-lt:#FDECEA;
+  --text:#030304;--text2:#3A4550;--text3:#7A8891;
+  --bg:#F0F3F8;--surface:#FFFFFF;--s2:#F5F7FA;
+  --border:rgba(122,136,145,.15);
+  --sh:0 2px 16px rgba(34,96,167,.10);
+  --font:'Outfit',sans-serif;--mono:'JetBrains Mono',monospace;
+  --radius:14px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);font-family:var(--font);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+
+/* ── Layout ── */
+.shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+.sidebar{background:var(--blue);display:flex;flex-direction:column;padding:0}
+.main{overflow:hidden}
+
+/* ── Sidebar ── */
+.brand{padding:28px 24px 20px;border-bottom:1px solid rgba(255,255,255,.12)}
+.brand-logo{font-size:20px;font-weight:700;color:#fff;letter-spacing:-.02em}
+.brand-sub{font-size:11px;color:rgba(255,255,255,.55);margin-top:2px;letter-spacing:.04em;text-transform:uppercase}
+
+.exposant-card{padding:20px 24px;border-bottom:1px solid rgba(255,255,255,.12)}
+.ec-avatar{width:44px;height:44px;background:rgba(255,255,255,.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:16px;margin-bottom:12px}
+.ec-name{font-size:14px;font-weight:600;color:#fff;margin-bottom:2px;line-height:1.3}
+.ec-ref{font-family:var(--mono);font-size:10px;color:rgba(255,255,255,.5);margin-bottom:8px}
+.ec-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:10px;font-weight:600;letter-spacing:.04em}
+.badge-inscrit{background:rgba(255,255,255,.15);color:rgba(255,255,255,.9)}
+.badge-valide{background:#E8F7EF;color:#1E7F54}
+.badge-paye{background:#FEF3E8;color:#C87B2F}
+.badge-solde{background:#E8F7EF;color:#1E7F54}
+.badge-annule{background:#FDECEA;color:#C0392B}
+
+.nav{flex:1;padding:16px 12px}
+.nav-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:10px;cursor:pointer;color:rgba(255,255,255,.65);font-size:13px;font-weight:500;transition:.15s;margin-bottom:2px;border:none;background:none;width:100%;text-align:left;font-family:var(--font)}
+.nav-item:hover{background:rgba(255,255,255,.08);color:#fff}
+.nav-item.active{background:rgba(255,255,255,.15);color:#fff;font-weight:600}
+.nav-icon{font-size:16px;width:20px;text-align:center;flex-shrink:0}
+.nav-danger{color:rgba(255,100,100,.8)!important}
+.nav-danger:hover{background:rgba(255,80,80,.12)!important;color:#ff6b6b!important}
+
+.nav-section{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:rgba(255,255,255,.35);padding:16px 14px 6px;margin-top:4px}
+
+/* ── Main content ── */
+.page{display:none;height:100%;overflow-y:auto;padding:32px 36px;animation:fadeIn .2s}
+.page.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+
+.page-header{margin-bottom:28px}
+.page-title{font-size:22px;font-weight:700;color:var(--text);margin-bottom:4px}
+.page-sub{font-size:13px;color:var(--text3)}
+
+/* ── Cards ── */
+.card{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);margin-bottom:16px;overflow:hidden}
+.card-head{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.card-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--blue)}
+.card-body{padding:20px}
+
+/* ── Info rows ── */
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px}
+.info-row:last-child{border-bottom:none}
+.info-label{color:var(--text3)}
+.info-value{font-weight:500;color:var(--text);text-align:right;max-width:60%}
+.info-value.mono{font-family:var(--mono);font-size:12px}
+.info-value.bold{font-weight:700}
+.info-value.blue{color:var(--blue);font-weight:700}
+.info-value.green{color:var(--green);font-weight:700}
+.info-value.amber{color:var(--amber);font-weight:700}
+.info-value.red{color:var(--red);font-weight:700}
+
+/* ── Stepper ── */
+.stepper{display:flex;align-items:flex-start;padding:24px 20px}
+.step{display:flex;flex-direction:column;align-items:center;flex:1;position:relative;gap:0}
+.step:not(:last-child)::after{content:'';position:absolute;top:18px;left:calc(50% + 18px);right:calc(-50% + 18px);height:2px;background:var(--border);z-index:0}
+.step.done:not(:last-child)::after{background:var(--blue)}
+.step-dot{width:36px;height:36px;border-radius:50%;border:2px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:center;z-index:1;position:relative;flex-shrink:0}
+.step-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-top:8px;color:var(--text3);text-align:center}
+
+/* ── Boutons ── */
+.btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;border:none;font-family:var(--font);transition:.15s;text-decoration:none}
+.btn-primary{background:var(--blue);color:#fff}
+.btn-primary:hover{background:#1a4d8a}
+.btn-outline{background:none;border:1.5px solid var(--blue);color:var(--blue)}
+.btn-outline:hover{background:var(--blue-lt)}
+.btn-ghost{background:none;border:1.5px solid var(--border);color:var(--text2)}
+.btn-ghost:hover{background:var(--s2)}
+.btn-danger{background:var(--red-lt);color:var(--red);border:1px solid rgba(192,57,43,.2)}
+.btn-danger:hover{background:var(--red);color:#fff}
+.btn-success{background:var(--green-lt);color:var(--green);border:1px solid rgba(30,127,84,.2)}
+.btn-sm{padding:7px 14px;font-size:12px}
+
+/* ── Docs grid ── */
+.docs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;padding:20px}
+.doc-card{border:1px solid var(--border);border-radius:10px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px;cursor:pointer;transition:.2s;text-align:center;background:var(--surface)}
+.doc-card:hover{border-color:var(--blue);box-shadow:var(--sh);transform:translateY(-2px)}
+.doc-icon{font-size:32px}
+.doc-name{font-size:12px;font-weight:600;color:var(--text)}
+.doc-sub{font-size:11px;color:var(--text3)}
+
+/* ── Paiement timeline ── */
+.payment-timeline{padding:20px}
+.pt-item{display:flex;gap:16px;margin-bottom:20px;position:relative}
+.pt-item:not(:last-child)::before{content:'';position:absolute;left:19px;top:40px;bottom:-20px;width:2px;background:var(--border)}
+.pt-icon{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;border:2px solid var(--border);background:var(--surface)}
+.pt-icon.done{background:var(--green-lt);border-color:var(--green)}
+.pt-icon.pending{background:var(--amber-lt);border-color:var(--amber)}
+.pt-icon.future{background:var(--s2);border-color:var(--border)}
+.pt-content{flex:1;padding-top:6px}
+.pt-label{font-size:13px;font-weight:600;color:var(--text)}
+.pt-date{font-size:11px;color:var(--text3);margin-top:2px}
+.pt-amount{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--blue);margin-top:4px}
+
+/* ── Calendrier de paiement ── */
+.cal-bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden;margin:8px 0}
+.cal-fill{height:100%;background:var(--green);border-radius:4px;transition:width .5s}
+
+/* ── Formulaire modification ── */
+.form-field{margin-bottom:16px}
+.form-label{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px;display:block}
+.form-input{width:100%;padding:10px 14px;border:1.5px solid var(--border);border-radius:10px;font-family:var(--font);font-size:13px;color:var(--text);background:var(--surface);transition:.15s}
+.form-input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-lt)}
+.form-hint{font-size:11px;color:var(--text3);margin-top:4px}
+textarea.form-input{min-height:80px;resize:vertical}
+
+/* ── Alerte annulation ── */
+.alert{border-radius:10px;padding:14px 16px;font-size:13px;margin-bottom:16px;line-height:1.6}
+.alert-warning{background:var(--amber-lt);border:1px solid rgba(200,123,47,.3);color:#7A3D00}
+.alert-danger{background:var(--red-lt);border:1px solid rgba(192,57,43,.3);color:var(--red)}
+.alert-success{background:var(--green-lt);border:1px solid rgba(30,127,84,.3);color:var(--green)}
+.alert-info{background:var(--blue-lt);border:1px solid var(--blue-mid);color:var(--blue)}
+
+/* ── Loading / Error ── */
+.loader{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:16px;color:var(--text3)}
+.spinner{width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error-state{max-width:400px;text-align:center;padding:40px}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  .shell{grid-template-columns:1fr}
+  .sidebar{display:none}
+  .page{padding:20px 16px}
+}
+</style>
+</head>
+<body>
+
+<!-- Loading -->
+<div id="appLoading" class="loader">
+  <div class="spinner"></div>
+  <div>Chargement de votre espace…</div>
+</div>
+
+<!-- App shell -->
+<div id="appShell" class="shell" style="display:none">
+
+  <!-- ── SIDEBAR ── -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo">Madavision</div>
+      <div class="brand-sub">Foire Internationale · 2026</div>
+    </div>
+
+    <div class="exposant-card">
+      <div class="ec-avatar" id="sideAvatar">?</div>
+      <div class="ec-name" id="sideName">—</div>
+      <div class="ec-ref mono" id="sideRef">—</div>
+      <span class="ec-badge badge-inscrit" id="sideBadge">—</span>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-section">Espace exposant</div>
+      <button class="nav-item active" onclick="showPage('overview')">
+        <span class="nav-icon">🏠</span> Mon dossier
+      </button>
+      <button class="nav-item" onclick="showPage('documents')">
+        <span class="nav-icon">📄</span> Mes documents
+      </button>
+      <button class="nav-item" onclick="showPage('payment')">
+        <span class="nav-icon">💳</span> Mon paiement
+      </button>
+
+      <div class="nav-section">Gestion</div>
+      <button class="nav-item" onclick="showPage('edit')">
+        <span class="nav-icon">✏️</span> Modifier
+      </button>
+      <button class="nav-item nav-danger" onclick="showPage('cancel')">
+        <span class="nav-icon">🚫</span> Annuler
+      </button>
+    </nav>
+  </aside>
+
+  <!-- ── MAIN ── -->
+  <main class="main">
+
+    <!-- PAGE : Mon dossier -->
+    <div class="page active" id="page-overview">
+      <div class="page-header">
+        <div class="page-title">Mon dossier</div>
+        <div class="page-sub" id="overviewSub">Chargement…</div>
+      </div>
+
+      <!-- Stepper statut -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Statut de mon dossier</span>
+          <span id="statutBadgeMain" class="ec-badge">—</span>
+        </div>
+        <div class="stepper" id="stepperEl"></div>
+      </div>
+
+      <!-- Informations exposant -->
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">Informations exposant</span>
+          <button class="btn btn-ghost btn-sm" onclick="showPage('edit')">✏️ Modifier</button>
+        </div>
+        <div class="card-body" id="infoExposant"></div>
+      </div>
+
+      <!-- Stand réservé -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Stand réservé</span></div>
+        <div class="card-body" id="infoStand"></div>
+      </div>
+
+      <!-- Pack exposant -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Pack exposant</span></div>
+        <div class="card-body" id="infoPack"></div>
+      </div>
+    </div>
+
+    <!-- PAGE : Mes documents -->
+    <div class="page" id="page-documents">
+      <div class="page-header">
+        <div class="page-title">Mes documents</div>
+        <div class="page-sub">Téléchargez et partagez vos documents FIM 2026</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="card-title">Documents disponibles</span></div>
+        <div class="docs-grid">
+          <div class="doc-card" onclick="downloadDossierPDF()">
+            <div class="doc-icon">📋</div>
+            <div class="doc-name">Dossier de participation</div>
+            <div class="doc-sub">PDF · Tous les détails</div>
+          </div>
+          <div class="doc-card" onclick="downloadBadgesPDF()">
+            <div class="doc-icon">🪪</div>
+            <div class="doc-name">Badges exposant</div>
+            <div class="doc-sub" id="badgesCount">— badges</div>
+          </div>
+          <div class="doc-card" onclick="downloadInvitationsPDF()">
+            <div class="doc-icon">🎟</div>
+            <div class="doc-name">Invitations</div>
+            <div class="doc-sub" id="invitCount">— invitations</div>
+          </div>
+          <div class="doc-card" onclick="sendDocByEmail()">
+            <div class="doc-icon">✉️</div>
+            <div class="doc-name">Envoyer par email</div>
+            <div class="doc-sub">Recevoir tous les docs</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Factures -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Factures & documents financiers</span></div>
+        <div class="card-body" id="facturesSection">
+          <div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">
+            Aucun document financier disponible pour l'instant.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE : Mon paiement -->
+    <div class="page" id="page-payment">
+      <div class="page-header">
+        <div class="page-title">Mon paiement</div>
+        <div class="page-sub">Suivi de vos règlements et échéances</div>
+      </div>
+
+      <!-- Récap financier -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Récapitulatif financier</span></div>
+        <div class="card-body" id="financeRecap"></div>
+      </div>
+
+      <!-- Calendrier paiement -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Calendrier de règlement</span></div>
+        <div class="payment-timeline" id="paymentTimeline"></div>
+      </div>
+
+      <!-- Paiements reçus -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Paiements reçus</span></div>
+        <div class="card-body" id="paiementsRecus">
+          <div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">
+            Aucun paiement enregistré.
+          </div>
+        </div>
+      </div>
+
+      <!-- Vouchers utilisés -->
+      <div class="card" id="voucherHistCard" style="display:none">
+        <div class="card-head"><span class="card-title">Vouchers utilisés</span></div>
+        <div class="card-body" id="voucherHist"></div>
+      </div>
+    </div>
+
+    <!-- PAGE : Modifier -->
+    <div class="page" id="page-edit">
+      <div class="page-header">
+        <div class="page-title">Modifier mon dossier</div>
+        <div class="page-sub">Mettez à jour vos informations de contact</div>
+      </div>
+
+      <div class="alert alert-info">
+        ℹ️ Les modifications de contact sont enregistrées immédiatement. Pour modifier votre type de stand ou emplacement, utilisez le formulaire de demande ci-dessous — Mme Sonia sera notifiée.
+      </div>
+
+      <!-- Infos de contact -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Informations de contact</span></div>
+        <div class="card-body">
+          <div class="form-field">
+            <label class="form-label">Contact principal</label>
+            <input type="text" class="form-input" id="editContact" placeholder="Nom et prénom"/>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Fonction</label>
+            <input type="text" class="form-input" id="editFonction" placeholder="Directeur commercial, PDG…"/>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Téléphone</label>
+            <input type="text" class="form-input" id="editTelephone" placeholder="03X XXX XXX"/>
+          </div>
+          <div class="form-field">
+            <label class="form-label">Adresse</label>
+            <textarea class="form-input" id="editAdresse" placeholder="Adresse complète"></textarea>
+          </div>
+          <button class="btn btn-primary" onclick="saveContactInfo()">💾 Enregistrer les modifications</button>
+          <span id="editStatus" style="margin-left:12px;font-size:12px;color:var(--green)"></span>
+        </div>
+      </div>
+
+      <!-- Demande de modification stand/emplacement -->
+      <div class="card">
+        <div class="card-head"><span class="card-title">Demande de modification (stand / emplacement)</span></div>
+        <div class="card-body">
+          <div class="alert alert-warning">
+            ⚠️ Les modifications de stand ou d'emplacement sont soumises à validation de Madavision et peuvent entraîner des ajustements de tarif.
+          </div>
+          <div class="form-field">
+            <label class="form-label">Décrivez votre demande de modification</label>
+            <textarea class="form-input" id="editDemande" rows="4" placeholder="Ex: Je souhaite changer mon stand Pagode 9m² pour un Chalet 9m², ou modifier mon emplacement B05 pour A12…"></textarea>
+            <div class="form-hint">Notre équipe vous recontactera dans les 24h.</div>
+          </div>
+          <button class="btn btn-outline" onclick="sendModificationRequest()">📩 Envoyer la demande</button>
+          <span id="demandeStatus" style="margin-left:12px;font-size:12px"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE : Annuler -->
+    <div class="page" id="page-cancel">
+      <div class="page-header">
+        <div class="page-title">Annuler mon inscription</div>
+        <div class="page-sub">Cette action est irréversible</div>
+      </div>
+
+      <div class="alert alert-danger">
+        <strong>⚠️ Important — Politique d'annulation</strong><br><br>
+        Conformément aux Conditions Générales de Vente de la FIM 2026 :<br>
+        • L'acompte versé est <strong>intégralement conservé</strong> par Madavision, quelle que soit la raison de l'annulation<br>
+        • Si la commande est soldée, aucun remboursement ne sera effectué<br>
+        • L'annulation est définitive et immédiate
+      </div>
+
+      <div class="card" id="cancelCard">
+        <div class="card-head"><span class="card-title">Confirmer l'annulation</span></div>
+        <div class="card-body">
+          <div id="cancelStep1">
+            <div class="form-field">
+              <label class="form-label">Motif de l'annulation (optionnel)</label>
+              <textarea class="form-input" id="cancelRaison" rows="3" placeholder="Raison de l'annulation…"></textarea>
+            </div>
+            <div class="form-field" style="display:flex;align-items:center;gap:10px">
+              <input type="checkbox" id="cancelConfirmCheck" style="width:16px;height:16px;accent-color:var(--red)"/>
+              <label for="cancelConfirmCheck" style="font-size:13px;color:var(--text2);cursor:pointer">
+                J'ai lu et j'accepte la politique d'annulation — l'acompte ne sera pas remboursé
+              </label>
+            </div>
+            <div style="display:flex;gap:12px;margin-top:8px">
+              <button class="btn btn-ghost" onclick="showPage('overview')">← Revenir</button>
+              <button class="btn btn-danger" onclick="confirmCancel()">🚫 Annuler mon inscription</button>
+            </div>
+          </div>
+          <div id="cancelStep2" style="display:none;text-align:center;padding:20px">
+            <div style="font-size:48px;margin-bottom:16px">✅</div>
+            <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px">Inscription annulée</div>
+            <div style="font-size:13px;color:var(--text3);margin-bottom:20px">Votre dossier a été annulé. Madavision a été notifié.</div>
+            <a href="inscription-fim2026.html" class="btn btn-primary">Nouvelle inscription</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ══════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════
+const CONFIG = {
+  apiUrl: 'http://localhost:3001/api',
+}
+
+const token = new URLSearchParams(location.search).get('token') || ''
+let DATA = null   // données chargées depuis le backend
+
+// ══════════════════════════════════════════════
+//  NAVIGATION
+// ══════════════════════════════════════════════
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'))
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'))
+  const page = document.getElementById(`page-${id}`)
+  if (page) page.classList.add('active')
+  // Activer le nav item correspondant
+  document.querySelectorAll('.nav-item').forEach(b => {
+    if (b.getAttribute('onclick')?.includes(`'${id}'`)) b.classList.add('active')
+  })
+}
+
+// ══════════════════════════════════════════════
+//  FORMAT HELPERS
+// ══════════════════════════════════════════════
+const fmt    = n => (Number(n)||0).toLocaleString('fr-FR') + ' Ar'
+const fmtPct = n => (Number(n)||0).toLocaleString('fr-FR') + ' %'
+const fmtDate = s => {
+  if (!s) return '—'
+  const d = new Date(s)
+  return isNaN(d) ? s : d.toLocaleDateString('fr-FR', {day:'2-digit',month:'long',year:'numeric'})
+}
+const addDays = (d, n) => { const r = new Date(d); r.setDate(r.getDate()+n); return r }
+
+function infoRow(label, value, cls='') {
+  if (!value && value !== 0) return ''
+  return `<div class="info-row">
+    <span class="info-label">${label}</span>
+    <span class="info-value ${cls}">${value}</span>
+  </div>`
+}
+
+function statutClass(s) {
+  if (!s) return 'badge-inscrit'
+  const m = { 'Inscrit':'badge-inscrit','Validé':'badge-valide','En cours':'badge-valide',
+               'Payé':'badge-paye','Soldé':'badge-solde','Annulé':'badge-annule' }
+  return m[s] || 'badge-inscrit'
+}
+function statutLabel(s) {
+  return { 'Inscrit':'● Inscrit','Validé':'● Validé','En cours':'● En cours',
+            'Payé':'● Payé','Soldé':'✓ Soldé','Annulé':'✗ Annulé' }[s] || s || '—'
+}
+
+// ══════════════════════════════════════════════
+//  CHARGEMENT DES DONNÉES
+// ══════════════════════════════════════════════
+async function load() {
+  if (!token) {
+    document.getElementById('appLoading').innerHTML = `
+      <div class="error-state">
+        <div style="font-size:48px;margin-bottom:16px">🔒</div>
+        <div style="font-size:18px;font-weight:600;margin-bottom:8px;color:var(--text)">Accès non autorisé</div>
+        <div style="font-size:13px;color:var(--text3)">Utilisez le lien envoyé dans votre email de confirmation.</div>
+      </div>`
+    return
+  }
+
+  try {
+    const res  = await fetch(`${CONFIG.apiUrl}/exposant/${token}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Dossier introuvable')
+    DATA = data
+    renderAll()
+    document.getElementById('appLoading').style.display  = 'none'
+    document.getElementById('appShell').style.display    = 'grid'
+  } catch(e) {
+    document.getElementById('appLoading').innerHTML = `
+      <div class="error-state">
+        <div style="font-size:48px;margin-bottom:16px">❌</div>
+        <div style="font-size:18px;font-weight:600;margin-bottom:8px;color:var(--text)">Dossier introuvable</div>
+        <div style="font-size:13px;color:var(--text3)">Vérifiez que votre lien est correct.<br>${e.message}</div>
+      </div>`
+  }
+}
+
+// ══════════════════════════════════════════════
+//  RENDU COMPLET
+// ══════════════════════════════════════════════
+function renderAll() {
+  const d  = DATA
+  const { participation:p, societe:s, edition:e, commandes,
+          paiements, utilisationsVoucher=[], commercial } = d
+
+  // ── Variables communes — déclarées ici pour toute la fonction ──
+  var cmd            = commandes ? commandes[0] : null
+  var statut         = (p && p.statutDossier)    || ''
+  var statutCmd      = (cmd && cmd.statut)        || ''
+  var montantTotal   = (p && p.montantTotal)      || (cmd && cmd.ttc)            || 0
+  var encaisse       = (p && p.montantEncaisse)   || (cmd && cmd.montantEncaisse) || 0
+  var resteAPayer    = (p && p.resteAPayer)       || (cmd && cmd.resteAPayer)     || 0
+  var aDejaPayeAcompte = encaisse > 0 && encaisse < montantTotal
+  var estSolde       = resteAPayer === 0 && montantTotal > 0 && encaisse > 0
+  var annule         = statut === 'Annulé' || statutCmd === 'Annulé'
+
+  // ── Sidebar ──
+  var initiales = ((s && s.raisonSociale) || '?').substring(0,2).toUpperCase()
+  document.getElementById('sideAvatar').textContent = initiales
+  document.getElementById('sideName').textContent   = (s && s.raisonSociale) || '—'
+  document.getElementById('sideRef').textContent    = p && p.numeroDossier ? '#' + p.numeroDossier : '—'
+  var badge = document.getElementById('sideBadge')
+  badge.className   = 'ec-badge ' + statutClass(statut)
+  badge.textContent = statutLabel(statut)
+
+  // ── Overview sub ──
+  var dateInscription = fmtDate(p && p.dateInscription)
+  document.getElementById('overviewSub').textContent = 'Inscrit le ' + dateInscription + ' · ' + ((e && e.nom) || 'FIM 2026')
+
+  // ── Stepper dynamique ──
+  var currentIdx = 0
+  if (!annule) {
+    var statutsValides = ['Validé','En cours','Partiellement payé','BC reçu','Payé','Soldé']
+    if (statutsValides.indexOf(statut) !== -1 || statutsValides.indexOf(statutCmd) !== -1) currentIdx = 1
+    if (aDejaPayeAcompte || statutCmd === 'Partiellement payé') currentIdx = 2
+    if (estSolde || statut === 'Soldé' || statutCmd === 'Payé') currentIdx = 3
+  }
+
+  var stepDefs = [
+    { label:'Inscription', sub: dateInscription !== '—' ? dateInscription : null },
+    { label:'Validation',  sub: null },
+    { label:'Acompte',     sub: aDejaPayeAcompte ? fmt(encaisse) : null },
+    { label:'Confirmé',    sub: estSolde ? 'Soldé ✓' : null },
+  ]
+
+  document.getElementById('stepperEl').innerHTML = stepDefs.map(function(st, i) {
+    var isDone    = i < currentIdx
+    var isCurrent = i === currentIdx && !annule
+    var dotContent, dotStyle
+    if (isDone) {
+      dotContent = '✓'
+      dotStyle   = 'background:var(--blue);border-color:var(--blue);color:#fff;font-weight:700;font-size:15px'
+    } else if (isCurrent) {
+      dotContent = '<span style="width:10px;height:10px;border-radius:50%;background:var(--blue);display:block"></span>'
+      dotStyle   = 'background:var(--surface);border:2px solid var(--blue);box-shadow:0 0 0 4px var(--blue-lt);display:flex;align-items:center;justify-content:center'
+    } else {
+      dotContent = '<span style="width:8px;height:8px;border-radius:50%;background:var(--border);display:block"></span>'
+      dotStyle   = 'background:var(--s2);border:2px solid var(--border);display:flex;align-items:center;justify-content:center'
+    }
+    var labelColor = isDone || isCurrent ? 'color:var(--blue);font-weight:600' : 'color:var(--text3)'
+    var subHtml    = st.sub ? '<div style="font-size:9px;color:var(--grey);margin-top:2px">' + st.sub + '</div>' : ''
+    return '<div class="step ' + (isDone ? 'done' : isCurrent ? 'current' : '') + '">' +
+      '<div class="step-dot" style="' + dotStyle + '">' + dotContent + '</div>' +
+      '<div class="step-label" style="' + labelColor + '">' + st.label + '</div>' +
+      subHtml + '</div>'
+  }).join('')
+
+  var sbm = document.getElementById('statutBadgeMain')
+  sbm.className   = 'ec-badge ' + statutClass(statut)
+  sbm.textContent = annule ? '✗ Annulé' : statutLabel(statut)
+
+  // ── Infos exposant ──
+  document.getElementById('infoExposant').innerHTML =
+    infoRow('Société', (s && s.raisonSociale), 'bold') +
+    infoRow('Type', (s && s.typeEntite)) +
+    infoRow('Contact', (s && s.contact)) +
+    infoRow('Fonction', (s && s.fonction)) +
+    infoRow('Email', (s && s.email)) +
+    infoRow('Téléphone', (s && s.telephone)) +
+    infoRow('Adresse', (s && s.adresse)) +
+    infoRow('Régime fiscal', (s && s.regimeFiscal)) +
+    infoRow('Statut exposant', (p && p.statutExposant)) +
+    (commercial ? infoRow('Commercial', commercial) : '') +
+    infoRow('Date inscription', fmtDate(p && p.dateInscription))
+
+  // ── Stand ──
+  document.getElementById('infoStand').innerHTML = cmd
+    ? infoRow('Statut commande', statutCmd, statutCmd === 'Payé' ? 'green' : '') +
+      infoRow('Réf commande', cmd.id ? cmd.id.slice(-8).toUpperCase() : '—', 'mono') +
+      infoRow('Date commande', fmtDate(cmd.dateCommande))
+    : '<div style="color:var(--text3);font-size:13px;text-align:center;padding:20px">Aucune commande.</div>'
+
+  // ── Pack exposant ──
+  var nb = p && p.nombreBadges, ni = p && p.nombreInvitations
+  document.getElementById('infoPack').innerHTML =
+    infoRow('Badges', nb != null ? nb + ' badge' + (nb > 1 ? 's' : '') : '—', 'bold') +
+    infoRow('Invitations', ni != null ? ni + ' invitation' + (ni > 1 ? 's' : '') : '—') +
+    infoRow('Activité gratuite', p && p.activiteGratuite)
+  document.getElementById('badgesCount').textContent = nb != null ? nb + ' badges' : '— badges'
+  document.getElementById('invitCount').textContent  = ni != null ? ni + ' invitations' : '— invitations'
+
+  // ── Finance ──
+  var pctPaye = montantTotal > 0 ? Math.min(100, Math.round(encaisse / montantTotal * 100)) : 0
+  document.getElementById('financeRecap').innerHTML =
+    infoRow('Total TTC', fmt(montantTotal), 'bold') +
+    infoRow('Montant encaissé', fmt(encaisse), encaisse > 0 ? 'green' : '') +
+    infoRow('Reste à payer', fmt(resteAPayer), resteAPayer > 0 ? 'amber' : 'green') +
+    '<div style="margin-top:14px">' +
+      '<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text3);margin-bottom:4px"><span>Progression</span><span>' + pctPaye + '%</span></div>' +
+      '<div class="cal-bar"><div class="cal-fill" style="width:' + pctPaye + '%"></div></div>' +
+    '</div>'
+
+  // ── Calendrier ──
+  var dateInsc     = new Date((p && p.dateInscription) || Date.now())
+  var dateAcompte  = addDays(dateInsc, 7)
+  var dateSolde    = addDays(dateAcompte, 20)
+  var acompteDu    = Math.round(montantTotal * 0.5)
+  var soldeDu      = montantTotal - acompteDu
+  var acomptePaye  = encaisse >= acompteDu && acompteDu > 0
+  document.getElementById('paymentTimeline').innerHTML =
+    '<div class="pt-item">' +
+      '<div class="pt-icon ' + (acomptePaye ? 'done' : new Date() > dateAcompte ? 'pending' : 'future') + '">' + (acomptePaye ? '✓' : '⏳') + '</div>' +
+      '<div class="pt-content"><div class="pt-label">Acompte 50%</div>' +
+      '<div class="pt-date">Échéance : ' + fmtDate(dateAcompte) + '</div>' +
+      '<div class="pt-amount">' + fmt(acompteDu) + '</div>' +
+      (acomptePaye ? '<div style="font-size:11px;color:var(--green);margin-top:4px">✓ Reçu</div>' : '') +
+      '</div></div>' +
+    '<div class="pt-item">' +
+      '<div class="pt-icon ' + (estSolde ? 'done' : acomptePaye ? 'pending' : 'future') + '">' + (estSolde ? '✓' : '💰') + '</div>' +
+      '<div class="pt-content"><div class="pt-label">Solde 50%</div>' +
+      '<div class="pt-date">Échéance : ' + fmtDate(dateSolde) + '</div>' +
+      '<div class="pt-amount">' + fmt(soldeDu) + '</div>' +
+      (estSolde ? '<div style="font-size:11px;color:var(--green);margin-top:4px">✓ Soldé</div>' : '') +
+      '</div></div>'
+
+  // ── Paiements ──
+  if (paiements && paiements.length > 0) {
+    document.getElementById('paiementsRecus').innerHTML = paiements.map(function(pa) {
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+        '<div><div style="font-weight:600">' + (pa.mode || 'Paiement') + '</div>' +
+        '<div style="font-size:11px;color:var(--text3)">' + fmtDate(pa.date) + (pa.reference ? ' · ' + pa.reference : '') + '</div></div>' +
+        '<div style="font-family:var(--mono);font-weight:700;color:var(--green)">' + fmt(pa.montant) + '</div></div>'
+    }).join('')
+  }
+
+  // ── Vouchers ──
+  if (utilisationsVoucher && utilisationsVoucher.length > 0) {
+    document.getElementById('voucherHistCard').style.display = 'block'
+    document.getElementById('voucherHist').innerHTML = utilisationsVoucher.map(function(u) {
+      return '<div class="info-row"><span class="info-label">Voucher ' + (u.voucherCode || '') + ' · ' + fmtDate(u.date) + '</span>' +
+        '<span class="info-value amber">−' + fmt(u.montantUtilise) + '</span></div>' +
+        '<div style="font-size:11px;color:var(--text3);padding-bottom:8px">Solde : ' + fmt(u.soldeAvant) + ' → ' + fmt(u.soldeApres) + '</div>'
+    }).join('')
+  }
+
+  // ── Factures ──
+  var docs = (d.documentsFinanciers) || []
+  if (docs.length > 0) {
+    document.getElementById('facturesSection').innerHTML = docs.map(function(doc) {
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border)">' +
+        '<div><div style="font-size:13px;font-weight:600;color:var(--text)">' + (doc.type || 'Document') + '</div>' +
+        '<div style="font-size:11px;color:var(--text3)">' + fmtDate(doc.dateEmission) + (doc.ttc ? ' · ' + fmt(doc.ttc) : '') + '</div></div>' +
+        '<div style="display:flex;gap:8px">' +
+        ((doc.pdfUrls && doc.pdfUrls.length) ? doc.pdfUrls.map(function(f) {
+          return '<a href="' + f.url + '" target="_blank" class="btn btn-outline btn-sm">⬇ PDF</a>'
+        }).join('') : '<span style="font-size:12px;color:var(--text3)">En cours</span>') +
+        '</div></div>'
+    }).join('')
+  }
+
+  // ── Pré-remplir formulaire ──
+  if (s) {
+    document.getElementById('editContact').value   = s.contact   || ''
+    document.getElementById('editFonction').value  = s.fonction  || ''
+    document.getElementById('editTelephone').value = s.telephone || ''
+    document.getElementById('editAdresse').value   = s.adresse   || ''
+  }
+}
+
+// ══════════════════════════════════════════════
+//  ACTIONS
+// ══════════════════════════════════════════════
+
+async function saveContactInfo() {
+  const body = {
+    contact:   document.getElementById('editContact').value,
+    fonction:  document.getElementById('editFonction').value,
+    telephone: document.getElementById('editTelephone').value,
+    adresse:   document.getElementById('editAdresse').value,
+  }
+  const status = document.getElementById('editStatus')
+  try {
+    const res  = await fetch(`${CONFIG.apiUrl}/exposant/${token}/update`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    status.style.color = 'var(--green)'
+    status.textContent = '✓ Modifications enregistrées'
+    setTimeout(() => status.textContent = '', 3000)
+  } catch(e) {
+    status.style.color = 'var(--red)'
+    status.textContent = '✗ Erreur : ' + e.message
+  }
+}
+
+async function sendModificationRequest() {
+  const demande = document.getElementById('editDemande').value.trim()
+  const status  = document.getElementById('demandeStatus')
+  if (!demande) {
+    status.style.color = 'var(--red)'
+    status.textContent = 'Veuillez décrire votre demande'
+    return
+  }
+  try {
+    const res  = await fetch(`${CONFIG.apiUrl}/exposant/${token}/update`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ demandeModification: demande })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    document.getElementById('editDemande').value = ''
+    status.style.color = 'var(--green)'
+    status.textContent = '✓ Demande envoyée — Madavision vous contactera dans 24h'
+  } catch(e) {
+    status.style.color = 'var(--red)'
+    status.textContent = '✗ Erreur : ' + e.message
+  }
+}
+
+async function confirmCancel() {
+  const checked = document.getElementById('cancelConfirmCheck').checked
+  if (!checked) {
+    alert('Vous devez cocher la case de confirmation.')
+    return
+  }
+  const raison = document.getElementById('cancelRaison').value.trim()
+  if (!confirm('Êtes-vous absolument certain(e) de vouloir annuler votre inscription ?')) return
+  try {
+    const res  = await fetch(`${CONFIG.apiUrl}/exposant/${token}/cancel`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ raison })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    document.getElementById('cancelStep1').style.display = 'none'
+    document.getElementById('cancelStep2').style.display = 'block'
+    // Mettre à jour le badge sidebar
+    const badge = document.getElementById('sideBadge')
+    badge.className = 'ec-badge badge-annule'
+    badge.textContent = '✗ Annulé'
+  } catch(e) {
+    alert('Erreur : ' + e.message)
+  }
+}
+
+// ══════════════════════════════════════════════
+//  GÉNÉRATION PDF
+// ══════════════════════════════════════════════
+function buildDossierHTML() {
+  if (!DATA) return ''
+  const {participation:p, societe:s, edition:e, commandes} = DATA
+  const cmd = commandes?.[0]
+  return `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"/>
+<style>
+body{font-family:'Helvetica Neue',Arial,sans-serif;color:#030304;margin:0;padding:40px;font-size:13px}
+.header{border-bottom:3px solid #2260A7;padding-bottom:16px;margin-bottom:24px;display:flex;justify-content:space-between;align-items:flex-start}
+.logo{font-size:24px;font-weight:700;color:#2260A7}
+.ref{font-family:monospace;font-size:12px;background:#F0F3F8;padding:6px 12px;border-radius:6px;color:#2260A7}
+h2{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2260A7;margin:20px 0 10px;border-bottom:1px solid #e0e7f0;padding-bottom:6px}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f3f8;font-size:12px}
+.lbl{color:#7A8891}.val{font-weight:500;text-align:right}
+.ttc{font-size:15px;font-weight:700;color:#2260A7;border-top:2px solid #2260A7;padding-top:10px;margin-top:10px}
+</style></head><body>
+<div class="header">
+  <div><div class="logo">Madavision</div><div style="font-size:11px;color:#7A8891;margin-top:4px">Foire Internationale de Madagascar 2026</div></div>
+  <div class="ref">Réf: ${p?.numeroDossier || '—'}</div>
+</div>
+<h2>Informations exposant</h2>
+<div class="row"><span class="lbl">Société</span><span class="val">${s?.raisonSociale||'—'}</span></div>
+<div class="row"><span class="lbl">Contact</span><span class="val">${s?.contact||'—'}</span></div>
+<div class="row"><span class="lbl">Email</span><span class="val">${s?.email||'—'}</span></div>
+<div class="row"><span class="lbl">Téléphone</span><span class="val">${s?.telephone||'—'}</span></div>
+<div class="row"><span class="lbl">Statut exposant</span><span class="val">${p?.statutExposant||'—'}</span></div>
+<div class="row"><span class="lbl">Régime fiscal</span><span class="val">${s?.regimeFiscal||'—'}</span></div>
+<h2>Montant</h2>
+<div class="row"><span class="lbl">Total TTC</span><span class="val">${fmt(p?.montantTotal||cmd?.ttc||0)}</span></div>
+<div class="row"><span class="lbl">Montant encaissé</span><span class="val">${fmt(p?.montantEncaisse||0)}</span></div>
+<div class="row ttc"><span>Reste à payer</span><span>${fmt(p?.resteAPayer||cmd?.resteAPayer||0)}</span></div>
+<h2>Conditions</h2>
+<p style="font-size:11px;color:#7A8891;line-height:1.6">L'acompte de 50% est dû dans les 7 jours suivant la validation. Le solde est dû dans les 20 jours suivant la réception de l'acompte. L'acompte est intégralement conservé en cas d'annulation.</p>
+</body></html>`
+}
+
+async function downloadDossierPDF() {
+  const html = buildDossierHTML()
+  const btn  = event?.currentTarget
+  if (btn) { btn.style.opacity = '.5'; btn.style.pointerEvents = 'none' }
+  try {
+    await html2pdf().set({
+      margin:[12,10], filename:`Dossier_FIM2026_${DATA?.societe?.raisonSociale?.replace(/\s+/g,'_')||'Exposant'}.pdf`,
+      image:{type:'jpeg',quality:.97}, html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+    }).from(html,'string').save()
+  } finally {
+    if (btn) { btn.style.opacity = '1'; btn.style.pointerEvents = '' }
+  }
+}
+
+async function downloadBadgesPDF() {
+  const {participation:p, societe:s} = DATA
+  const nb    = p?.nombreBadges || 5
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(location.href)}`
+  const nom   = s?.raisonSociale || '—'
+  const badges= Array.from({length:nb},(_,i)=>`
+    <div style="width:85mm;height:54mm;border:2px solid #2260A7;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid;margin:4px">
+      <div style="background:#2260A7;padding:8px 12px;display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;background:rgba(255,255,255,.2);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700">${nom.slice(0,2).toUpperCase()}</div>
+        <div><div style="color:#fff;font-weight:700;font-size:12px">FIM 2026</div><div style="color:rgba(255,255,255,.7);font-size:9px">EXPOSANT</div></div>
+      </div>
+      <div style="padding:8px 12px;flex:1"><div style="font-weight:700;font-size:12px">${nom}</div><div style="font-size:10px;color:#7A8891;margin-top:3px">Badge ${String(i+1).padStart(2,'0')} / ${String(nb).padStart(2,'0')}</div></div>
+      <div style="padding:6px 12px;border-top:1px solid #e0e7f0;display:flex;align-items:center;gap:8px">
+        <img src="${qrUrl}" style="width:36px;height:36px"/>
+        <div style="font-size:9px;color:#7A8891">Scannable sur site<br>FIM · Antananarivo 2026</div>
+      </div>
+    </div>`).join('')
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>body{margin:0;padding:8px;background:#fff;font-family:Arial,sans-serif}.page{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}</style></head><body><div class="page">${badges}</div></body></html>`
+  await html2pdf().set({
+    margin:5, filename:`Badges_FIM2026_${nom.replace(/\s+/g,'_')}.pdf`,
+    image:{type:'jpeg',quality:.97}, html2canvas:{scale:2,useCORS:true},
+    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+  }).from(html,'string').save()
+}
+
+async function downloadInvitationsPDF() {
+  const {participation:p, societe:s} = DATA
+  const ni  = p?.nombreInvitations || 10
+  const nom = s?.raisonSociale || '—'
+  const invits = Array.from({length:ni},(_,i)=>`
+    <div style="width:148mm;height:35mm;border:1px solid #2260A7;border-radius:6px;display:flex;align-items:center;gap:16px;padding:0 16px;margin-bottom:6px;page-break-inside:avoid;background:#F0F3F8">
+      <div style="font-size:28px">🎟</div>
+      <div style="flex:1">
+        <div style="font-size:14px;font-weight:700;color:#2260A7">INVITATION — FIM 2026</div>
+        <div style="font-size:11px;color:#3A4550;margin-top:2px">${nom}</div>
+        <div style="font-size:10px;color:#7A8891;margin-top:2px">Invitation ${i+1}/${ni} · Foire Internationale de Madagascar</div>
+      </div>
+    </div>`).join('')
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/><style>body{margin:0;padding:16px;font-family:Arial,sans-serif;background:#fff}</style></head><body>${invits}</body></html>`
+  await html2pdf().set({
+    margin:8, filename:`Invitations_FIM2026_${nom.replace(/\s+/g,'_')}.pdf`,
+    image:{type:'jpeg',quality:.97}, html2canvas:{scale:2,useCORS:true},
+    jsPDF:{unit:'mm',format:'a4',orientation:'portrait'},
+  }).from(html,'string').save()
+}
+
+async function sendDocByEmail() {
+  try {
+    const html = buildDossierHTML()
+    const res = await fetch(`${CONFIG.apiUrl}/send-dossier`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ token, toEmail: DATA?.societe?.email, dossierHtml: html })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error)
+    alert('✓ Documents envoyés à ' + (DATA?.societe?.email || 'votre adresse email'))
+  } catch(e) {
+    alert('Erreur : ' + e.message)
+  }
+}
+
+// ══════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════
+load()
+</script>
+</body>
+</html>

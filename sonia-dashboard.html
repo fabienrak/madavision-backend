@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Espace Sonia — Validation FIM 2026</title>
+<style>
+:root {
+  --navy:     #1B2A4A;
+  --navy2:    #243659;
+  --blue:     #2260A7;
+  --blue-lt:  #EEF2F8;
+  --teal:     #0D7680;
+  --teal-lt:  #F0FDFA;
+  --green:    #1E7F54;
+  --green-lt: #E8F7EF;
+  --amber:    #C87B2F;
+  --amber-lt: #FEF3E8;
+  --red:      #C0392B;
+  --red-lt:   #FDECEA;
+  --bg:       #F2F4F8;
+  --surface:  #FFFFFF;
+  --border:   #DDE3EE;
+  --text:     #0D1B2E;
+  --text2:    #4A5568;
+  --text3:    #8A96A8;
+  --mono:     'Courier New', monospace;
+  --font:     'Segoe UI', system-ui, sans-serif;
+  --r:        10px;
+  --shadow:   0 2px 12px rgba(0,0,0,.08);
+}
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0 }
+body { font-family:var(--font); background:var(--bg); color:var(--text); min-height:100vh; font-size:14px }
+
+/* ── Auth screen ── */
+#screen-auth {
+  min-height:100vh; display:flex; align-items:center; justify-content:center;
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy2) 60%, #1a3a6e 100%);
+}
+.auth-card {
+  background:var(--surface); border-radius:16px; padding:40px 36px; width:100%; max-width:420px;
+  box-shadow:0 24px 60px rgba(0,0,0,.25);
+}
+.auth-logo { display:flex; align-items:center; gap:12px; margin-bottom:28px }
+.auth-logo .mark {
+  width:44px; height:44px; background:var(--blue); border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; font-weight:800; color:#fff; letter-spacing:-.02em
+}
+.auth-logo .brand { font-size:18px; font-weight:700; color:var(--navy) }
+.auth-logo .sub { font-size:11px; color:var(--text3); margin-top:1px }
+.auth-title { font-size:22px; font-weight:700; color:var(--navy); margin-bottom:6px }
+.auth-sub { font-size:13px; color:var(--text3); margin-bottom:24px; line-height:1.5 }
+.field-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--text2); margin-bottom:6px }
+.field-input {
+  width:100%; padding:11px 14px; border:1.5px solid var(--border); border-radius:var(--r);
+  font-family:var(--font); font-size:14px; color:var(--text); background:var(--surface);
+  transition:border-color .15s; outline:none
+}
+.field-input:focus { border-color:var(--blue); box-shadow:0 0 0 3px rgba(34,96,167,.12) }
+.otp-input {
+  letter-spacing:8px; font-family:var(--mono); font-size:22px; font-weight:700;
+  text-align:center; background:#F5F7FA
+}
+.btn-primary {
+  width:100%; padding:13px; background:var(--blue); color:#fff; border:none;
+  border-radius:var(--r); font-family:var(--font); font-size:14px; font-weight:600;
+  cursor:pointer; transition:background .15s; margin-top:14px
+}
+.btn-primary:hover { background:#1a4f8f }
+.btn-primary:disabled { background:#9CB3D0; cursor:not-allowed }
+.btn-link { background:none; border:none; color:var(--blue); font-size:13px; cursor:pointer; padding:0; text-decoration:underline; margin-top:12px }
+.auth-err { background:var(--red-lt); border:1px solid rgba(192,57,43,.2); border-radius:8px; padding:10px 14px; font-size:13px; color:var(--red); margin-top:12px; display:none }
+.auth-success { background:var(--green-lt); border:1px solid rgba(30,127,84,.2); border-radius:8px; padding:10px 14px; font-size:13px; color:var(--green); margin-top:12px; display:none }
+.countdown { font-size:12px; color:var(--text3); margin-top:8px; text-align:center }
+
+/* ── Dashboard screen ── */
+#screen-dash { display:none }
+.topbar {
+  background:var(--navy); padding:0 28px; height:56px;
+  display:flex; align-items:center; justify-content:space-between;
+  box-shadow:0 2px 8px rgba(0,0,0,.15)
+}
+.topbar-brand { display:flex; align-items:center; gap:10px }
+.topbar-mark { width:30px; height:30px; background:var(--blue); border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800; color:#fff }
+.topbar-title { font-size:15px; font-weight:700; color:#fff; letter-spacing:-.01em }
+.topbar-right { display:flex; align-items:center; gap:12px }
+.topbar-user { font-size:12px; color:rgba(255,255,255,.6) }
+.btn-logout { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); color:rgba(255,255,255,.7); padding:5px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-family:var(--font) }
+.btn-logout:hover { background:rgba(255,255,255,.14) }
+
+.dash-main { padding:24px 28px; max-width:1200px; margin:0 auto }
+
+/* Stats bar */
+.stats-bar { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:24px }
+.stat-card {
+  background:var(--surface); border-radius:var(--r); padding:16px 18px;
+  border:1px solid var(--border); box-shadow:var(--shadow)
+}
+.stat-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text3) }
+.stat-value { font-size:28px; font-weight:800; margin-top:4px; font-variant-numeric:tabular-nums }
+.stat-sub { font-size:11px; color:var(--text3); margin-top:2px }
+
+/* Filters */
+.filters-row { display:flex; align-items:center; gap:10px; margin-bottom:18px; flex-wrap:wrap }
+.filter-btn {
+  padding:6px 16px; border-radius:99px; border:1.5px solid var(--border); background:var(--surface);
+  font-family:var(--font); font-size:12px; font-weight:600; cursor:pointer; transition:.12s; color:var(--text2)
+}
+.filter-btn.active { border-color:var(--blue); background:var(--blue); color:#fff }
+.search-box {
+  flex:1; min-width:200px; padding:8px 12px; border:1.5px solid var(--border);
+  border-radius:99px; font-family:var(--font); font-size:13px; outline:none;
+  background:var(--surface); color:var(--text)
+}
+.search-box:focus { border-color:var(--blue) }
+.btn-refresh {
+  padding:8px 14px; border:1.5px solid var(--border); border-radius:8px;
+  background:var(--surface); font-family:var(--font); font-size:12px; cursor:pointer; color:var(--text2);
+  display:flex; align-items:center; gap:6px
+}
+.btn-refresh:hover { border-color:var(--blue); color:var(--blue) }
+
+/* Dossiers list */
+.dossiers-list { display:flex; flex-direction:column; gap:12px }
+.dossier-card {
+  background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  overflow:hidden; box-shadow:var(--shadow); transition:box-shadow .15s
+}
+.dossier-card:hover { box-shadow:0 4px 20px rgba(0,0,0,.12) }
+.dossier-card.status-valide  { border-left:4px solid var(--green) }
+.dossier-card.status-rejete  { border-left:4px solid var(--red) }
+.dossier-card.status-attente { border-left:4px solid var(--amber) }
+
+.dossier-header {
+  display:grid; grid-template-columns:auto 1fr auto auto;
+  gap:14px; align-items:center; padding:14px 18px; cursor:pointer
+}
+.dossier-header:hover { background:var(--bg) }
+.dossier-ref { font-family:var(--mono); font-size:12px; font-weight:700; color:var(--blue); background:var(--blue-lt); padding:3px 9px; border-radius:6px }
+.dossier-soc { font-size:15px; font-weight:700; color:var(--text) }
+.dossier-meta { font-size:11px; color:var(--text3); margin-top:2px }
+.status-badge {
+  font-size:10px; font-weight:700; padding:4px 10px; border-radius:99px;
+  text-transform:uppercase; letter-spacing:.05em; white-space:nowrap
+}
+.badge-attente { background:var(--amber-lt); color:var(--amber) }
+.badge-valide  { background:var(--green-lt); color:var(--green) }
+.badge-rejete  { background:var(--red-lt);   color:var(--red)   }
+.badge-autres  { background:var(--blue-lt);  color:var(--blue)  }
+.chevron { color:var(--text3); font-size:16px; transition:transform .2s; user-select:none }
+.chevron.open { transform:rotate(180deg) }
+
+.dossier-body { border-top:1px solid var(--border); display:none; padding:18px }
+.dossier-body.open { display:block }
+
+.detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px }
+.detail-section { background:var(--bg); border-radius:8px; padding:12px 14px }
+.detail-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.07em; color:var(--text3); margin-bottom:8px }
+.detail-row { display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px }
+.detail-row:last-child { border-bottom:none }
+.detail-row .dl { color:var(--text3) }
+.detail-row .dv { font-weight:500; color:var(--text) }
+
+/* Commercial assignment */
+.assign-section { background:var(--blue-lt); border:1px solid rgba(34,96,167,.2); border-radius:8px; padding:14px 16px; margin-bottom:14px }
+.assign-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--blue); margin-bottom:8px }
+.assign-row { display:flex; gap:8px; align-items:center }
+.assign-select {
+  flex:1; padding:8px 12px; border:1.5px solid rgba(34,96,167,.3); border-radius:8px;
+  background:var(--surface); font-family:var(--font); font-size:13px; color:var(--text); outline:none
+}
+.assign-select:focus { border-color:var(--blue) }
+.btn-assign {
+  padding:8px 16px; background:var(--blue); color:#fff; border:none; border-radius:8px;
+  font-family:var(--font); font-size:12px; font-weight:600; cursor:pointer
+}
+.btn-assign:hover { background:#1a4f8f }
+
+/* Action buttons */
+.action-row { display:flex; gap:10px; flex-wrap:wrap }
+.btn-valider {
+  padding:10px 20px; background:var(--green); color:#fff; border:none; border-radius:8px;
+  font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px
+}
+.btn-valider:hover { background:#165f3e }
+.btn-rejeter {
+  padding:10px 20px; background:var(--surface); color:var(--red); border:1.5px solid var(--red); border-radius:8px;
+  font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px
+}
+.btn-rejeter:hover { background:var(--red-lt) }
+.btn-action:disabled, .btn-valider:disabled, .btn-rejeter:disabled { opacity:.5; cursor:not-allowed }
+.note-input {
+  flex:1; padding:9px 12px; border:1.5px solid var(--border); border-radius:8px;
+  font-family:var(--font); font-size:12px; resize:none; outline:none; min-width:200px
+}
+.note-input:focus { border-color:var(--blue) }
+
+/* Toast */
+#toast {
+  position:fixed; bottom:24px; right:24px; z-index:9999;
+  background:var(--navy); color:#fff; padding:12px 18px; border-radius:10px;
+  font-size:13px; font-weight:600; box-shadow:0 4px 20px rgba(0,0,0,.25);
+  transform:translateY(80px); opacity:0; transition:.3s; pointer-events:none
+}
+#toast.show { transform:none; opacity:1 }
+#toast.err  { background:var(--red) }
+#toast.ok   { background:var(--green) }
+
+/* Empty state */
+.empty-state { text-align:center; padding:48px 20px; color:var(--text3) }
+.empty-state .icon { font-size:48px; margin-bottom:12px }
+.empty-state h3 { font-size:16px; color:var(--text2); margin-bottom:6px }
+
+/* Loading */
+.loading { display:flex; align-items:center; justify-content:center; padding:40px; color:var(--text3); gap:10px }
+.spin { width:20px; height:20px; border:2px solid var(--border); border-top-color:var(--blue); border-radius:50%; animation:spin .7s linear infinite }
+@keyframes spin { to { transform:rotate(360deg) } }
+
+/* Rejet modal */
+#modalRejet {
+  position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:8888;
+  display:none; align-items:center; justify-content:center; padding:20px
+}
+#modalRejet.open { display:flex }
+.modal-box { background:var(--surface); border-radius:14px; padding:28px; max-width:460px; width:100%; box-shadow:0 16px 48px rgba(0,0,0,.2) }
+.modal-title { font-size:17px; font-weight:700; color:var(--red); margin-bottom:16px }
+.modal-sub { font-size:13px; color:var(--text2); margin-bottom:16px; line-height:1.5 }
+.modal-btns { display:flex; gap:10px; justify-content:flex-end; margin-top:18px }
+.btn-cancel { padding:9px 18px; background:var(--bg); border:1px solid var(--border); border-radius:8px; font-family:var(--font); font-size:13px; cursor:pointer; color:var(--text2) }
+.btn-confirm-rejet { padding:9px 18px; background:var(--red); color:#fff; border:none; border-radius:8px; font-family:var(--font); font-size:13px; font-weight:600; cursor:pointer }
+
+@media(max-width:700px) {
+  .stats-bar { grid-template-columns:1fr 1fr }
+  .detail-grid { grid-template-columns:1fr }
+  .dossier-header { grid-template-columns:auto 1fr auto }
+}
+</style>
+</head>
+<body>
+
+<!-- ══ SCREEN AUTH ══ -->
+<div id="screen-auth">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="mark">MV</div>
+      <div>
+        <div class="brand">Madavision</div>
+        <div class="sub">Espace de validation — FIM 2026</div>
+      </div>
+    </div>
+
+    <!-- Étape 1 : saisie email -->
+    <div id="auth-step1">
+      <div class="auth-title">Connexion sécurisée</div>
+      <div class="auth-sub">Entrez votre email professionnel. Un code à 6 chiffres vous sera envoyé.</div>
+      <div class="field-label">Adresse email</div>
+      <input type="email" id="authEmail" class="field-input" placeholder="sonia@madavision.mg"
+        onkeydown="if(event.key==='Enter') sendOtp()"/>
+      <div id="authErr1" class="auth-err"></div>
+      <button class="btn-primary" onclick="sendOtp()" id="btnSendOtp">Recevoir le code →</button>
+    </div>
+
+    <!-- Étape 2 : code OTP -->
+    <div id="auth-step2" style="display:none">
+      <div class="auth-title">Vérification</div>
+      <div class="auth-sub" id="otpSubtext"></div>
+      <div class="field-label">Code à 6 chiffres</div>
+      <input type="text" id="authOtp" class="field-input otp-input" placeholder="· · · · · ·"
+        maxlength="6" inputmode="numeric" autocomplete="one-time-code"
+        onkeydown="if(event.key==='Enter') verifyOtp()" oninput="this.value=this.value.replace(/\D/g,'')"/>
+      <div id="authErr2" class="auth-err"></div>
+      <button class="btn-primary" onclick="verifyOtp()" id="btnVerify">Valider</button>
+      <div style="text-align:center;margin-top:12px">
+        <button class="btn-link" onclick="resendOtp()">Renvoyer un nouveau code</button>
+      </div>
+      <div id="countdown" class="countdown"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCREEN DASHBOARD ══ -->
+<div id="screen-dash">
+  <div class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-mark">MV</div>
+      <div>
+        <div class="topbar-title">Espace Sonia — Validation FIM 2026</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="topbar-user" id="topbarUser"></span>
+      <button class="btn-logout" onclick="logout()">Déconnexion</button>
+    </div>
+  </div>
+
+  <div class="dash-main">
+
+    <!-- Stats -->
+    <div class="stats-bar" id="statsBar">
+      <div class="stat-card"><div class="stat-label">En attente</div><div class="stat-value" id="statAttente" style="color:var(--amber)">—</div><div class="stat-sub">à valider</div></div>
+      <div class="stat-card"><div class="stat-label">Validés</div><div class="stat-value" id="statValide" style="color:var(--green)">—</div><div class="stat-sub">ce cycle</div></div>
+      <div class="stat-card"><div class="stat-label">Rejetés</div><div class="stat-value" id="statRejete" style="color:var(--red)">—</div><div class="stat-sub">total</div></div>
+      <div class="stat-card"><div class="stat-label">Total dossiers</div><div class="stat-value" id="statTotal" style="color:var(--blue)">—</div><div class="stat-sub">chargés</div></div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters-row">
+      <button class="filter-btn" data-filtre="A valider" onclick="setFiltre('A valider', this)">⏳ À valider</button>
+      <button class="filter-btn" data-filtre="Validé"    onclick="setFiltre('Validé', this)">✓ Validés</button>
+      <button class="filter-btn" data-filtre="Rejeté"    onclick="setFiltre('Rejeté', this)">✕ Rejetés</button>
+      <button class="filter-btn" data-filtre="Annulé"    onclick="setFiltre('Annulé', this)">◌ Annulés</button>
+      <button class="filter-btn active" data-filtre="tous" onclick="setFiltre('tous', this)">Tous</button>
+      <input type="text" class="search-box" id="searchBox" placeholder="🔍 Rechercher société, dossier…" oninput="filterSearch(this.value)"/>
+      <button class="btn-refresh" onclick="loadDossiers()">↻ Actualiser</button>
+    </div>
+
+    <!-- Liste dossiers -->
+    <div id="dossiersList" class="dossiers-list">
+      <div class="loading"><div class="spin"></div>Chargement des dossiers…</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modale rejet -->
+<div id="modalRejet">
+  <div class="modal-box">
+    <div class="modal-title">⚠ Rejeter ce dossier</div>
+    <div class="modal-sub">Le dossier sera marqué comme <strong>Rejeté</strong>. L'exposant en sera informé. Cette action peut être annulée par une revalidation ultérieure.</div>
+    <div class="field-label">Motif du rejet <span style="color:var(--text3);font-weight:400">(optionnel)</span></div>
+    <textarea id="raisonRejet" class="note-input" rows="3" placeholder="Ex : Informations manquantes, emplacement non disponible…" style="width:100%"></textarea>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">Annuler</button>
+      <button class="btn-confirm-rejet" onclick="confirmRejet()">Confirmer le rejet</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════
+//  CONFIG
+// ══════════════════════════════════════════════
+const API = 'http://localhost:3001/api'
+
+// ══════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════
+var state = {
+  token:        localStorage.getItem('soniaToken') || null,
+  email:        localStorage.getItem('soniaEmail') || null,
+  dossiers:     [],
+  commerciaux:  [],
+  filtreStatut: 'tous',
+  search:       '',
+}
+var _pendingRejet = null   // id en attente de confirmation rejet
+var _otpTimer    = null
+
+// ══════════════════════════════════════════════
+//  AUTH
+// ══════════════════════════════════════════════
+async function sendOtp() {
+  var email = document.getElementById('authEmail').value.trim()
+  var err   = document.getElementById('authErr1')
+  err.style.display = 'none'
+  if (!email || !email.includes('@')) { showErr(err, 'Email invalide.'); return }
+  var btn = document.getElementById('btnSendOtp')
+  btn.disabled = true; btn.textContent = 'Envoi en cours…'
+  try {
+    var r = await fetch(API+'/sonia/send-otp', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email}) })
+    var d = await r.json()
+    if (!r.ok) { showErr(err, d.error||'Erreur'); btn.disabled=false; btn.textContent='Recevoir le code →'; return }
+    // Dev mode : affiche le code en console
+    if (d.dev) console.log('%c[DEV] OTP Sonia: '+d.dev, 'color:#2260A7;font-size:18px;font-weight:bold')
+    document.getElementById('auth-step1').style.display = 'none'
+    document.getElementById('auth-step2').style.display = 'block'
+    document.getElementById('otpSubtext').textContent = 'Un code a été envoyé à '+email+'. Il expire dans 10 minutes.'
+    state.pendingEmail = email
+    startOtpCountdown(600)
+    setTimeout(function(){ document.getElementById('authOtp').focus() }, 100)
+  } catch(e) {
+    showErr(err, 'Impossible de contacter le serveur.')
+    btn.disabled = false; btn.textContent = 'Recevoir le code →'
+  }
+}
+
+async function verifyOtp() {
+  var code = document.getElementById('authOtp').value.trim()
+  var err  = document.getElementById('authErr2')
+  err.style.display = 'none'
+  if (code.length !== 6) { showErr(err, 'Code à 6 chiffres attendu.'); return }
+  var btn = document.getElementById('btnVerify')
+  btn.disabled = true; btn.textContent = 'Vérification…'
+  try {
+    var r = await fetch(API+'/sonia/verify-otp', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:state.pendingEmail, code}) })
+    var d = await r.json()
+    if (!r.ok) { showErr(err, d.error||'Code incorrect'); btn.disabled=false; btn.textContent='Valider'; return }
+    clearInterval(_otpTimer)
+    state.token = d.token
+    state.email = state.pendingEmail
+    localStorage.setItem('soniaToken', d.token)
+    localStorage.setItem('soniaEmail', state.email)
+    enterDashboard()
+  } catch(e) {
+    showErr(err, 'Erreur de connexion.'); btn.disabled=false; btn.textContent='Valider'
+  }
+}
+
+function resendOtp() {
+  document.getElementById('auth-step2').style.display = 'none'
+  document.getElementById('auth-step1').style.display = 'block'
+  var btn = document.getElementById('btnSendOtp')
+  btn.disabled = false; btn.textContent = 'Recevoir le code →'
+  clearInterval(_otpTimer)
+  document.getElementById('countdown').textContent = ''
+}
+
+function startOtpCountdown(seconds) {
+  clearInterval(_otpTimer)
+  var el = document.getElementById('countdown')
+  _otpTimer = setInterval(function() {
+    seconds--
+    var m = Math.floor(seconds/60), s = seconds%60
+    el.textContent = 'Code valide encore '+m+':'+(s<10?'0':'')+s
+    if (seconds <= 0) {
+      clearInterval(_otpTimer)
+      el.textContent = 'Code expiré. Demandez un nouveau code.'
+      el.style.color = 'var(--red)'
+    }
+  }, 1000)
+}
+
+function showErr(el, msg) { el.textContent = msg; el.style.display = 'block' }
+
+function logout() {
+  localStorage.removeItem('soniaToken'); localStorage.removeItem('soniaEmail')
+  state.token = null; state.email = null
+  document.getElementById('screen-dash').style.display = 'none'
+  document.getElementById('screen-auth').style.display = 'flex'
+  document.getElementById('authEmail').value = ''
+  document.getElementById('auth-step1').style.display = 'block'
+  document.getElementById('auth-step2').style.display = 'none'
+  var btn = document.getElementById('btnSendOtp'); btn.disabled=false; btn.textContent='Recevoir le code →'
+}
+
+function enterDashboard() {
+  document.getElementById('screen-auth').style.display = 'none'
+  document.getElementById('screen-dash').style.display = 'block'
+  document.getElementById('topbarUser').textContent = state.email
+  loadDossiers()
+}
+
+// ══════════════════════════════════════════════
+//  DOSSIERS
+// ══════════════════════════════════════════════
+async function loadDossiers() {
+  var list = document.getElementById('dossiersList')
+  list.innerHTML = '<div class="loading"><div class="spin"></div>Chargement…</div>'
+  try {
+    var r = await fetch(API+'/sonia/dossiers?statut=tous', { headers: {'x-sonia-token': state.token} })
+    if (r.status === 401) { logout(); return }
+    var d = await r.json()
+    if (!r.ok) {
+      list.innerHTML = '<div class="empty-state"><div class="icon">⚠</div><h3>'+d.error+'</h3>'+(d.detail?'<pre style="font-size:11px;text-align:left;padding:10px;background:#f5f5f5;border-radius:8px;margin-top:10px">'+JSON.stringify(d.detail,null,2)+'</pre>':'')+'</div>'
+      return
+    }
+    state.dossiers    = d.dossiers    || []
+    state.commerciaux = d.commerciaux || []
+
+    if (state.dossiers.length > 0 && state.dossiers[0].rawFields) {
+      console.log('%c[DEBUG] Champs Participations:', 'color:#2260A7;font-weight:bold', state.dossiers[0].rawFields)
+      console.log('%c[DEBUG] Commerciaux:', 'color:#2260A7;font-weight:bold', state.commerciaux)
+    }
+
+    updateStats()
+    renderDossiers()
+
+    if (state.dossiers.length === 0) {
+      list.innerHTML = '<div class="empty-state"><div class="icon">📂</div><h3>Aucun dossier retourné par Airtable</h3><p style="margin-top:8px;font-size:12px">Vérifiez les noms de tables et champs dans la console (F12).</p><button onclick="runDebug()" style="margin-top:14px;padding:8px 18px;background:var(--blue);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:var(--font);font-size:13px">🔍 Diagnostiquer les champs Airtable</button></div>'
+    }
+  } catch(e) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">🔌</div><h3>Erreur réseau : '+e.message+'</h3></div>'
+  }
+}
+
+async function runDebug() {
+  var [r1, r2] = await Promise.all([
+    fetch(API+'/sonia/debug?table=Participations', { headers: {'x-sonia-token': state.token} }).then(r=>r.json()),
+    fetch(API+'/sonia/debug?table=Commerciaux',   { headers: {'x-sonia-token': state.token} }).then(r=>r.json()),
+  ])
+  console.log('%c[DEBUG RAW Participations]', 'color:red;font-size:14px;font-weight:bold', r1)
+  console.log('%c[DEBUG RAW Commerciaux]',   'color:orange;font-size:14px;font-weight:bold', r2)
+
+  var buildRows = function(sample) {
+    if (!sample || !sample[0]) return '<em style="color:#999">Aucun enregistrement</em>'
+    return Object.entries(sample[0].sample).map(function(e){
+      return '<div style="padding:3px 0;border-bottom:1px solid #eee"><span style="color:#2260A7;font-weight:600;min-width:200px;display:inline-block">'+e[0]+'</span> <span style="color:#333">'+e[1]+'</span></div>'
+    }).join('')
+  }
+
+  var overlay = document.createElement('div')
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px'
+  overlay.innerHTML = '<div style="background:#fff;border-radius:14px;padding:24px;max-width:720px;width:100%;max-height:85vh;overflow-y:auto"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px"><strong style="font-size:16px">🔍 Diagnostic champs Airtable</strong><button onclick="this.closest('div[style]').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#999">✕</button></div><div style="font-size:11px;background:#FEF3E8;border-left:3px solid #C87B2F;padding:10px 14px;border-radius:0 8px 8px 0;margin-bottom:16px;color:#7A3D00">Utilisez ces noms exacts pour mettre à jour les champs dans server.js si nécessaire.</div><div style="font-weight:700;color:#2260A7;margin-bottom:8px">Table Participations ('+r1.totalRecords+' records échantillonnés)</div><div style="font-family:monospace;font-size:12px;line-height:1.7;background:#F5F7FA;border-radius:8px;padding:14px;margin-bottom:18px">'+buildRows(r1.sample)+'</div><div style="font-weight:700;color:#C87B2F;margin-bottom:8px">Table Commerciaux</div><div style="font-family:monospace;font-size:12px;line-height:1.7;background:#F5F7FA;border-radius:8px;padding:14px">'+buildRows(r2.sample)+'</div></div>'
+  document.body.appendChild(overlay)
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove() })
+}
+
+function updateStats() {
+  var att = state.dossiers.filter(d => d.statut === 'A valider').length
+  var val = state.dossiers.filter(d => d.statut === 'Validé').length
+  var rej = state.dossiers.filter(d => d.statut === 'Rejeté').length
+  document.getElementById('statAttente').textContent = att
+  document.getElementById('statValide').textContent  = val
+  document.getElementById('statRejete').textContent  = rej
+  document.getElementById('statTotal').textContent   = state.dossiers.length
+}
+
+function setFiltre(f, btn) {
+  state.filtreStatut = f
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  renderDossiers()
+}
+
+function filterSearch(q) {
+  state.search = q.trim().toLowerCase()
+  renderDossiers()
+}
+
+function renderDossiers() {
+  var list = document.getElementById('dossiersList')
+  var items = state.dossiers.filter(function(d) {
+    if (state.filtreStatut !== 'tous' && d.statut !== state.filtreStatut) return false
+    if (state.search) {
+      var q = state.search
+      return d.societe.nom.toLowerCase().includes(q) || d.numDossier.toLowerCase().includes(q) || d.societe.email.toLowerCase().includes(q)
+    }
+    return true
+  })
+
+  if (!items.length) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">📂</div><h3>Aucun dossier à afficher</h3><p>Essayez un autre filtre.</p></div>'
+    return
+  }
+
+  list.innerHTML = ''
+  items.forEach(function(dos) { list.appendChild(buildCard(dos)) })
+}
+
+function buildCard(dos) {
+  var statusClass = dos.statut === 'Validé' ? 'status-valide' : dos.statut === 'Rejeté' ? 'status-rejete' : 'status-attente'
+  var badgeClass  = dos.statut === 'Validé' ? 'badge-valide' : dos.statut === 'Rejeté' ? 'badge-rejete' : dos.statut === 'A valider' ? 'badge-attente' : 'badge-autres'
+  var badgeLabel  = dos.statut === 'A valider' ? '⏳ À valider' : dos.statut === 'Validé' ? '✓ Validé' : dos.statut === 'Rejeté' ? '✕ Rejeté' : dos.statut
+
+  // Commercial actuel
+  var commActuel = dos.commercial ? (state.commerciaux.find(c => c.id === dos.commercial) || {nom:'—'}).nom : '— non assigné —'
+
+  // Options commerciaux select
+  var optsComm = '<option value="">— Choisir un commercial —</option>'
+  state.commerciaux.forEach(function(c) {
+    optsComm += '<option value="'+c.id+'"'+(dos.commercial===c.id?' selected':'')+'>'+c.nom+'</option>'
+  })
+
+  // Commandes
+  var cmdsHtml = dos.commandes.length ? dos.commandes.map(function(c) {
+    return '<div class="detail-row"><span class="dl">'+c.stand+'</span><span class="dv">'+(c.montant?Number(c.montant).toLocaleString('fr-FR')+' Ar TTC':'—')+'</span></div>'
+  }).join('') : '<div class="detail-row"><span class="dl" style="font-style:italic">Aucune commande</span></div>'
+
+  // Actions (seulement si En attente)
+  var actionsHtml = ''
+  if (dos.statut === 'A valider') {
+    actionsHtml = `
+      <textarea id="note-${dos.id}" class="note-input" rows="2" placeholder="Note de validation (optionnelle)…" style="width:100%;margin-bottom:10px"></textarea>
+      <div class="action-row">
+        <button class="btn-valider" onclick="validerDossier('${dos.id}')">✓ Valider le dossier</button>
+        <button class="btn-rejeter" onclick="ouvrirModalRejet('${dos.id}')">✕ Rejeter</button>
+      </div>`
+  }
+
+  var card = document.createElement('div')
+  card.className = 'dossier-card '+statusClass
+  card.id = 'card-'+dos.id
+  card.innerHTML = `
+    <div class="dossier-header" onclick="toggleCard('${dos.id}')">
+      <div class="dossier-ref">${dos.numDossier}</div>
+      <div>
+        <div class="dossier-soc">${dos.societe.nom}</div>
+        <div class="dossier-meta">${dos.societe.secteur||''}${dos.societe.email?' · '+dos.societe.email:''} · ${dos.dateInscription?new Date(dos.dateInscription).toLocaleDateString('fr-FR'):''}</div>
+      </div>
+      <span class="status-badge ${badgeClass}">${badgeLabel}</span>
+      <span class="chevron" id="chevron-${dos.id}">▾</span>
+    </div>
+    <div class="dossier-body" id="body-${dos.id}">
+      <div class="detail-grid">
+        <div class="detail-section">
+          <div class="detail-title">Exposant</div>
+          <div class="detail-row"><span class="dl">Société</span><span class="dv">${dos.societe.nom}</span></div>
+          <div class="detail-row"><span class="dl">Statut</span><span class="dv">${dos.statutExposant}</span></div>
+          <div class="detail-row"><span class="dl">Email</span><span class="dv">${dos.societe.email||'—'}</span></div>
+          <div class="detail-row"><span class="dl">Téléphone</span><span class="dv">${dos.societe.telephone||'—'}</span></div>
+        </div>
+        <div class="detail-section">
+          <div class="detail-title">Commandes</div>
+          ${cmdsHtml}
+        </div>
+      </div>
+
+      <div class="assign-section">
+        <div class="assign-title">👤 Commercial assigné</div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Actuellement : <strong>${commActuel}</strong></div>
+        <div class="assign-row">
+          <select class="assign-select" id="sel-comm-${dos.id}">${optsComm}</select>
+          <button class="btn-assign" onclick="assignerCommercial('${dos.id}')">Enregistrer</button>
+        </div>
+      </div>
+
+      ${actionsHtml}
+    </div>`
+  return card
+}
+
+function toggleCard(id) {
+  var body    = document.getElementById('body-'+id)
+  var chevron = document.getElementById('chevron-'+id)
+  body.classList.toggle('open')
+  chevron.classList.toggle('open')
+}
+
+// ══════════════════════════════════════════════
+//  ACTIONS
+// ══════════════════════════════════════════════
+async function validerDossier(id) {
+  var commercialId = (document.getElementById('sel-comm-'+id)||{}).value || null
+  var note         = (document.getElementById('note-'+id)||{}).value || ''
+  try {
+    var r = await fetch(API+'/sonia/valider/'+id, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-sonia-token': state.token },
+      body: JSON.stringify({ commercialId, note })
+    })
+    var d = await r.json()
+    if (!r.ok) { toast(d.error||'Erreur', 'err'); return }
+    toast('✓ Dossier validé !', 'ok')
+    // MAJ locale
+    var dos = state.dossiers.find(x => x.id === id)
+    if (dos) { dos.statut = 'Validé'; if(commercialId) dos.commercial = commercialId }
+    updateStats(); renderDossiers()
+  } catch(e) { toast('Erreur réseau', 'err') }
+}
+
+function ouvrirModalRejet(id) {
+  _pendingRejet = id
+  document.getElementById('raisonRejet').value = ''
+  document.getElementById('modalRejet').classList.add('open')
+}
+function closeModal() {
+  _pendingRejet = null
+  document.getElementById('modalRejet').classList.remove('open')
+}
+
+async function confirmRejet() {
+  if (!_pendingRejet) return
+  var raison = document.getElementById('raisonRejet').value.trim()
+  var id = _pendingRejet
+  closeModal()
+  try {
+    var r = await fetch(API+'/sonia/rejeter/'+id, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-sonia-token': state.token },
+      body: JSON.stringify({ raison })
+    })
+    var d = await r.json()
+    if (!r.ok) { toast(d.error||'Erreur', 'err'); return }
+    toast('Dossier rejeté.', 'ok')
+    var dos = state.dossiers.find(x => x.id === id)
+    if (dos) dos.statut = 'Rejeté'
+    updateStats(); renderDossiers()
+  } catch(e) { toast('Erreur réseau', 'err') }
+}
+
+async function assignerCommercial(id) {
+  var commercialId = (document.getElementById('sel-comm-'+id)||{}).value
+  if (!commercialId) { toast('Choisissez un commercial', 'err'); return }
+  try {
+    var r = await fetch(API+'/sonia/assigner/'+id, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-sonia-token': state.token },
+      body: JSON.stringify({ commercialId })
+    })
+    var d = await r.json()
+    if (!r.ok) { toast(d.error||'Erreur', 'err'); return }
+    toast('✓ Commercial assigné', 'ok')
+    var dos = state.dossiers.find(x => x.id === id)
+    if (dos) dos.commercial = commercialId
+    // MAJ label localement sans re-render complet
+    var commNom = (state.commerciaux.find(c => c.id === commercialId)||{}).nom || '—'
+    var card = document.getElementById('card-'+id)
+    if (card) {
+      var actuelEl = card.querySelector('.assign-section strong')
+      if (actuelEl) actuelEl.textContent = commNom
+    }
+  } catch(e) { toast('Erreur réseau', 'err') }
+}
+
+// ══════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════
+var _toastTimeout = null
+function toast(msg, type) {
+  var el = document.getElementById('toast')
+  el.textContent = msg
+  el.className = 'show '+(type||'ok')
+  clearTimeout(_toastTimeout)
+  _toastTimeout = setTimeout(function(){ el.className = '' }, 3000)
+}
+
+// ══════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════
+;(function init() {
+  if (state.token && state.email) {
+    // Vérifier que le token est encore valide
+    try {
+      var d = JSON.parse(atob(state.token))
+      if (Date.now() < d.exp) { enterDashboard(); return }
+    } catch(e) {}
+    localStorage.removeItem('soniaToken'); localStorage.removeItem('soniaEmail')
+  }
+  // Sinon : afficher l'écran auth
+})()
+</script>
+</body>
+</html>
