@@ -716,7 +716,7 @@ async function ensureAuthUser({ email, role, linkedRecordId, password, passwordH
     airtableRecordId: linkedRecordId || '',
     active: true,
     ...(finalPasswordHash ? { passwordHash: finalPasswordHash } : {}),
-    createdAt: new Date().toISOString(),
+    // createdAt: new Date().toISOString(),
   })
   authUserCache.expires = 0
   return normalizeAuthUser(record)
@@ -5124,17 +5124,25 @@ app.post('/api/sonia/accounts', requireSonia, async (req, res) => {
     const user = await ensureAuthUser({ email, role, linkedRecordId, password })
     const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')
     const spacePath = role === 'commercial' ? '/commercial' : role === 'exposant' ? '/exposant' : '/sonia'
+    const accessUrl = `${frontendBase}${spacePath}`
+    const roleText = role === 'commercial' ? 'Espace commercial' : role === 'exposant' ? 'Espace exposant' : 'Espace administration'
     const result = await mailer(
       email,
       'Votre compte Madavision est prêt',
       emailWrapper(`
         <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Votre compte Madavision est prêt</h2>
         <p>Bonjour,</p>
-        <p>Un accès <strong>${escapeHtml(role)}</strong>${label ? ` pour <strong>${escapeHtml(label)}</strong>` : ''} vient d'être créé par l'administration Madavision.</p>
-        <p>Vous pouvez maintenant vous connecter avec votre email et le mot de passe défini lors de la création du compte.</p>
-        <div style="margin-top:22px">
-          <a href="${frontendBase}${spacePath}" style="background:#1B2A4A;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
+        <p>Un accès <strong>${escapeHtml(roleText)}</strong>${label ? ` pour <strong>${escapeHtml(label)}</strong>` : ''} vient d'être créé par l'administration Madavision.</p>
+        <div style="background:#EEF2F8;border-left:3px solid #2260A7;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2260A7;margin-bottom:8px">Informations de connexion</div>
+          <div style="font-size:13px;color:#1B2A4A"><strong>Identifiant :</strong> ${escapeHtml(email)}</div>
+          <div style="font-size:13px;color:#1B2A4A;margin-top:4px"><strong>Espace :</strong> ${escapeHtml(roleText)}</div>
         </div>
+        <p>Vous pouvez maintenant vous connecter avec cet email et le mot de passe défini lors de la création du compte.</p>
+        <div style="margin-top:22px">
+          <a href="${accessUrl}" style="background:#1B2A4A;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
+        </div>
+        <div style="font-size:11px;color:#9B9183;margin-top:10px;word-break:break-all">${accessUrl}</div>
       `)
     )
 
