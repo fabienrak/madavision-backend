@@ -336,6 +336,16 @@ const headers = () => ({
   'Content-Type': 'application/json',
 })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+const PLAN_MASSE_FIELDS = ['Plan de masse', 'Plan masse', 'Plan', 'Floor plan']
+
+function attachmentUrl(fields, names) {
+  for (const name of names) {
+    const value = fields?.[name]
+    const first = Array.isArray(value) ? value[0] : null
+    if (first?.url) return first.url
+  }
+  return null
+}
 
 async function atGet(table, params = '') {
   let records = [], offset = null
@@ -1192,6 +1202,7 @@ app.get('/api/bootstrap', async (req, res) => {
         dateFin:     f['Date fin']     || f['Date de fin']   || '',
         editionIds,
         logo:        f['Logo']?.[0]?.url || null,
+        planMasseUrl: attachmentUrl(f, PLAN_MASSE_FIELDS),
       }
     })
 
@@ -2286,6 +2297,17 @@ app.get('/api/exposant/:token', async (req, res) => {
         dateDebut: edData.fields['Date début'],
         dateFin:   edData.fields['Date fin'],
         lieu:      edData.fields['Lieu'],
+        salonId:   (edData.fields['Salon'] || edData.fields['Salons'] || edData.fields['Salon lié'] || edData.fields['ID Salon'] || [])[0] || null,
+      }
+    }
+
+    // 3b. Plan de masse du salon lié à l'édition
+    let planMasseUrl = null
+    if (edition?.salonId) {
+      const salonRes = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${edition.salonId}`, { headers: headers() })
+      if (salonRes.ok) {
+        const salonData = await salonRes.json()
+        planMasseUrl = attachmentUrl(salonData.fields || {}, PLAN_MASSE_FIELDS)
       }
     }
 
@@ -2485,6 +2507,7 @@ app.get('/api/exposant/:token', async (req, res) => {
         regimeFiscal:    sf['Régime fiscal'],
       },
       edition,
+      planMasseUrl,
       commercial,
       commandes: [commandeData],
       stands,
@@ -3299,6 +3322,45 @@ app.post('/api/exposant/:token/update', async (req, res) => {
         headers: headers(),
         body: JSON.stringify({ fields: { 'Notes': (noteActuelle + noteAjout).trim() } }),
       })
+    }
+
+    // Modification des stands sélectionnés
+    if (Array.isArray(data.standIds)) {
+      const cmdFields = {}
+      cmdFields['Stand ou service commandé'] = data.standIds
+      cmdFields['Validation'] = 'A valider'
+      cmdFields['Statut commande'] = 'En attente de validation'
+
+      await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmd.id}`, {
+        method: 'PATCH',
+        headers: headers(),
+        body: JSON.stringify({ fields: cmdFields }),
+      })
+
+      const currentStandIds = (cf['Stand ou service commandé'] || []).map(id => String(id))
+      const newStandIds = data.standIds.map(String)
+      const toFree = currentStandIds.filter(id => !newStandIds.includes(id))
+      const toReserve = newStandIds.filter(id => !currentStandIds.includes(id))
+
+      for (const id of toFree) {
+        try {
+          await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${id}`, {
+            method: 'PATCH',
+            headers: headers(),
+            body: JSON.stringify({ fields: { 'Statut': 'Disponible' } }),
+          })
+        } catch(e) { console.warn(`[update] free stand ${id}:`, e.message) }
+      }
+
+      for (const id of toReserve) {
+        try {
+          await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${id}`, {
+            method: 'PATCH',
+            headers: headers(),
+            body: JSON.stringify({ fields: { 'Statut': 'Réservé' } }),
+          })
+        } catch(e) { console.warn(`[update] reserve stand ${id}:`, e.message) }
+      }
     }
 
     res.json({ success: true, message: 'Informations mises à jour.' })
