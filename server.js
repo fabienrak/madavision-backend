@@ -716,7 +716,6 @@ async function ensureAuthUser({ email, role, linkedRecordId, password, passwordH
     airtableRecordId: linkedRecordId || '',
     active: true,
     ...(finalPasswordHash ? { passwordHash: finalPasswordHash } : {}),
-    // createdAt: new Date().toISOString(),
   })
   authUserCache.expires = 0
   return normalizeAuthUser(record)
@@ -2303,9 +2302,47 @@ app.get('/api/exposant/:token', async (req, res) => {
       }
     }
 
-    // 5. Normalisation de la commande pour le frontend
+    // 5. Stands commandés
+    const rawStandIds = Array.isArray(cf['Stand ou service commandé']) ? cf['Stand ou service commandé'] : []
+    const stands = []
+    const standLabels = []
+    for (const standId of rawStandIds) {
+      if (!String(standId || '').startsWith('rec')) {
+        const label = String(standId || '').trim()
+        if (label) {
+          standLabels.push(label)
+          stands.push({ id: label, label })
+        }
+        continue
+      }
+      try {
+        const sRes = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${standId}`, { headers: headers() })
+        if (!sRes.ok) {
+          standLabels.push(standId)
+          stands.push({ id: standId, label: standId })
+          continue
+        }
+        const sData = await sRes.json()
+        const sFields = sData.fields || {}
+        const label = sFields['ID Stand'] || sFields['Numéro stand'] || sFields['Spécificités'] || standId
+        standLabels.push(label)
+        stands.push({
+          id: standId,
+          label,
+          surface: sFields['Dimension'] || sFields['Surface'] || '',
+          prix: sFields['Prix'] || sFields['Tarif référence'] || 0,
+          type: sFields['Spécificités'] || sFields['Type'] || 'Autres',
+        })
+      } catch (e) {
+        standLabels.push(standId)
+        stands.push({ id: standId, label: standId })
+      }
+    }
+
+    // 6. Normalisation de la commande pour le frontend
     const commandeData = {
       id:              cmd.id,
+      idCommande:      cf['Numero de dossier'] || cf['ID Commande'] || cmd.id.slice(-8).toUpperCase(),
       dateCommande:    cf['Date commande'],
       statut:          cf['Statut commande'],
       statutValidation:cf['Validation'],
@@ -2318,9 +2355,11 @@ app.get('/api/exposant/:token', async (req, res) => {
       notes:           cf['Notes'] || '',
       paiements:       cf['Paiements'] || [],
       documentsFinanciers: cf['Documents financiers'] || [],
+      stands:          standLabels.join(', '),
+      standItems:      stands,
     }
 
-    // 6. Paiements
+    // 7. Paiements
     const allPaiementIds = cf['Paiements'] || []
     const paiements = []
     for (const pid of allPaiementIds) {
@@ -2339,7 +2378,7 @@ app.get('/api/exposant/:token', async (req, res) => {
       }
     }
 
-    // 7. Documents financiers
+    // 8. Documents financiers
     const allDocsIds = cf['Documents financiers'] || []
     const documentsFinanciers = []
     for (const dId of allDocsIds) {
@@ -2360,7 +2399,7 @@ app.get('/api/exposant/:token', async (req, res) => {
       }
     }
 
-    // 7b. Historique des vouchers utilisés par cette participation
+    // 8b. Historique des vouchers utilisés par cette participation
     // (recherche les utilisations dans Utilisations Voucher liées aux commandes de cette participation)
     const utilisationsVoucher = []
     try {
@@ -2399,10 +2438,10 @@ app.get('/api/exposant/:token', async (req, res) => {
         }
     } catch (e) { console.warn('Voucher history failed:', e.message) }
 
-    // 7c. Bilan de puissance depuis Commandes.Puissance
+    // 8c. Bilan de puissance depuis Commandes.Puissance
     const bilan = await fetchBilanPuissance(cmd.id, cf)
 
-    // 7d. Activités optionnelles
+    // 8d. Activités optionnelles
     let optionalActivities = []
     if (cf['Activités optionnelles'] && cf['Activités optionnelles'].length > 0) {
       try {
@@ -2417,7 +2456,7 @@ app.get('/api/exposant/:token', async (req, res) => {
       } catch (e) { console.warn('Resolution activities failed', e.message) }
     }
 
-    // 8. Réponse complète
+    // 9. Réponse complète
     res.json({
       utilisationsVoucher,
       participation: {
@@ -2448,6 +2487,7 @@ app.get('/api/exposant/:token', async (req, res) => {
       edition,
       commercial,
       commandes: [commandeData],
+      stands,
       paiements,
       documentsFinanciers,
       optionalActivities,
@@ -2629,7 +2669,7 @@ app.post('/api/exposant/:token/bilan', async (req, res) => {
     const fields = {
       'Materiel':          data.materiel,
       'Puissance':         Number(data.puissance) || 0,
-      'Status':            data.status !== false ? 'Actif' : 'Inactif',
+      'Status':            data.status === 'Non Actif' ? 'Non Actif' : 'Actif',
       'Nombre':            Number(data.nombre) || 1,
       'Duree utilisation': Number(data.duree) || 0,
       'Commandes':         [cmdId]
@@ -2651,7 +2691,7 @@ app.patch('/api/exposant/:token/bilan/:id', async (req, res) => {
     const fields = {}
     if (data.materiel !== undefined)  fields['Materiel']          = data.materiel
     if (data.puissance !== undefined) fields['Puissance']         = Number(data.puissance)
-    if (data.status !== undefined)    fields['Status']            = data.status ? 'Actif' : 'Inactif'
+    if (data.status !== undefined)    fields['Status']            = data.status
     if (data.nombre !== undefined)    fields['Nombre']            = Number(data.nombre)
     if (data.duree !== undefined)     fields['Duree utilisation'] = Number(data.duree)
 
@@ -3957,15 +3997,15 @@ async function fetchFirstRecordFromTables(tableNames, id) {
 function mapBilanPuissanceRecord(record) {
   const f = record.fields || {}
   const rawStatus = f['Status'] ?? f['Statut']
-  const active = rawStatus === undefined || rawStatus === null || rawStatus === ''
-    ? true
-    : ['Actif', 'Active', 'Validé', 'Valide', true].includes(rawStatus)
+  let status = 'Actif'
+  if (rawStatus === 'Non Actif' || rawStatus === 'Inactif' || rawStatus === false) status = 'Non Actif'
+  else if (rawStatus === 'Actif' || rawStatus === true || rawStatus === 'Active') status = 'Actif'
 
   return {
     id: record.id,
     materiel: f['Materiel'] || f['Matériel'] || f['Appareil'] || f['Équipement'] || '',
     puissance: invoiceMoney(f['Puissance']),
-    status: active,
+    status,
     nombre: f['Nombre'] || f['Quantité'] || 1,
     duree: f['Duree utilisation'] || f['Durée utilisation'] || 0,
   }
