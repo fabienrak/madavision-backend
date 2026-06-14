@@ -16,6 +16,15 @@ require('dotenv').config()
 const UPLOADS_DIR = path.join(__dirname, 'uploads')
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true })
 
+function fmtMoney(value) {
+  const n = Number(value || 0)
+  return n.toLocaleString('fr-FR').replace(/\s/g, '.') + ' Ar'
+}
+
+function fmtMoneyRaw(value) {
+  return Number(value || 0).toLocaleString('fr-FR').replace(/\s/g, '.')
+}
+
 // ── Génération PDF du dossier d'inscription ──────────────────
 function generateInscriptionPDF(data) {
   return new Promise((resolve, reject) => {
@@ -25,45 +34,81 @@ function generateInscriptionPDF(data) {
     doc.on('end',  () => resolve(Buffer.concat(bufs)))
     doc.on('error', reject)
 
-    const TEAL   = '#0A7070'
-    const NAVY   = '#1B2A4A'
-    const GRAY   = '#5C5649'
-    const LGRAY  = '#E8E3DA'
-    const W      = 495   // largeur utile (595 - 2×50)
+    const BLEU  = '#195b98'
+    const GRIS  = '#687e7e'
+    const NOIR  = '#0d0d0d'
+    const LGRIS = '#E8E3DA'
+    const W     = 495
 
-    // ── En-tête ──
-    doc.rect(50, 50, W, 70).fill(TEAL)
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(18).text('MADAVISION', 65, 65)
-    doc.font('Helvetica').fontSize(10).text('Madavision — Dossier d\'inscription', 65, 90)
-    doc.fillColor(NAVY)
+    // --- HEADER ---
+    doc.rect(50, 50, W, 110).fill(BLEU)
 
-    let y = 145
+    const logoMadPath = '/Users/mac/Desktop/my_project/MADAVISION/madavision-react/assets/logo/madavision-logo.png'
+    if (fs.existsSync(logoMadPath)) {
+      doc.image(logoMadPath, 65, 60, { width: 55 })
+    }
 
-    // ── Numéro de dossier ──
-    doc.rect(50, y, W, 40).fillAndStroke('#E6F4F4', TEAL)
-    doc.fillColor(TEAL).font('Helvetica-Bold').fontSize(10).text('NUMÉRO DE DOSSIER', 65, y + 8)
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(13)
+      .text('MADAVISION', 130, 60)
+    doc.font('Helvetica').fontSize(7).fillColor('#E6F4F4')
+      .text('Foire Internationale de Madagascar — 2026', 130, 75)
+
+    // Liste des informations société à gauche (sous le titre)
+    const contactParts = [];
+    if (data.nif) contactParts.push(`NIF : ${data.nif}`);
+    if (data.stat) contactParts.push(`STAT : ${data.stat}`);
+    if (data.telephone) contactParts.push(`Tel : ${data.telephone}`);
+    if (data.email) contactParts.push(`Email : ${data.email}`);
+    if (data.siteWeb) contactParts.push(`Site web : ${data.siteWeb}`);
+    if (data.adresse) contactParts.push(`Adresse : ${data.adresse}`);
+
+    doc.font('Helvetica').fontSize(8).fillColor('#E6F4F4');
+    contactParts.forEach((part, i) => {
+      doc.text(`• ${part}`, 130, 90 + i * 11);
+    });
+
+    // Logo exposant ou Nom à droite
+    const nomSocPdf = data.nomSociete || data.nomSoc || ''
+    if (nomSocPdf) {
+      doc.fillColor('#fff').font('Helvetica-Bold').fontSize(11)
+        .text(nomSocPdf.toUpperCase(), 380, 60, { width: 155, align: 'right' })
+      doc.fillColor('#E6F4F4').font('Helvetica').fontSize(7)
+        .text('SOCIÉTÉ EXPOSANTE', 380, 75, { width: 155, align: 'right' })
+      
+      // Si un logo société est présent dans data
+      if (data.logoSocieteUrl) {
+        // Note: nécessite que l'image soit accessible localement ou téléchargée
+        // doc.image(data.logoSocieteUrl, 480, 90, { width: 40 });
+      }
+    }
+
+    let y = 175
+
+    // --- Numéro de dossier ---
+    doc.rect(50, y, W, 40).fillAndStroke('#E6F4F4', BLEU)
+    doc.fillColor(BLEU).font('Helvetica-Bold').fontSize(10).text('NUMÉRO DE DOSSIER', 65, y + 8)
     doc.font('Courier-Bold').fontSize(16).text(data.numDossier || '—', 65, y + 22)
-    doc.fillColor(NAVY)
+    doc.fillColor(NOIR)
     y += 58
 
     function section(title) {
       doc.rect(50, y, W, 24).fill('#F5F3EF')
-      doc.fillColor(TEAL).font('Helvetica-Bold').fontSize(9)
+      doc.fillColor(BLEU).font('Helvetica-Bold').fontSize(9)
         .text(title.toUpperCase(), 65, y + 8)
-      doc.fillColor(NAVY)
+      doc.fillColor(NOIR)
       y += 32
     }
 
     function row(label, value, indent = 65) {
       if (!value) return
-      doc.font('Helvetica').fontSize(9).fillColor(GRAY).text(label, indent, y, { width: 160, continued: false })
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(NAVY).text(String(value), indent + 165, y - 9, { width: W - 165 - 15 })
-      y += 16
       if (y > 760) { doc.addPage(); y = 60 }
+      doc.font('Helvetica').fontSize(9).fillColor(GRIS).text(label, indent, y, { width: 160 })
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(String(value), indent + 165, y, { width: W - 165 - 15, align: 'right' })
+      y += 16
     }
 
     function separator() {
-      doc.moveTo(50, y).lineTo(545, y).strokeColor(LGRAY).lineWidth(0.5).stroke()
+      doc.moveTo(50, y).lineTo(545, y).strokeColor(LGRIS).lineWidth(0.5).stroke()
       y += 10
     }
 
@@ -102,14 +147,14 @@ function generateInscriptionPDF(data) {
     section('Stands réservés')
     const stands = Array.isArray(data.stands) ? data.stands : []
     if (stands.length === 0) {
-      doc.font('Helvetica').fontSize(9).fillColor(GRAY).text('—', 65, y); y += 16
+      doc.font('Helvetica').fontSize(9).fillColor(GRIS).text('—', 65, y); y += 16
     } else {
       stands.forEach(s => {
         const label = s.label || s.produitId || '—'
         const surf  = s.surface ? `  ${String(s.surface).replace(/\s*m²?/i,'')} m²` : ''
-        const prix  = s.prix ? `${Number(s.prix).toLocaleString('fr-FR')} Ar` : ''
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(NAVY).text(label + surf, 65, y, { width: W - 180 })
-        if (prix) doc.font('Helvetica').fontSize(9).fillColor(TEAL).text(prix, 400, y, { width: 145, align: 'right' })
+        const prix  = s.prix ? `${fmtMoneyRaw(s.prix)} Ar` : ''
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(label + surf, 65, y, { width: W - 180 })
+        if (prix) doc.font('Helvetica').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
         y += 16
         if (y > 760) { doc.addPage(); y = 60 }
       })
@@ -122,9 +167,9 @@ function generateInscriptionPDF(data) {
       section('Activités & Services optionnels')
       optActs.forEach(act => {
         const label = act.label || '—'
-        const prix  = act.prix ? `${Number(act.prix).toLocaleString('fr-FR')} Ar` : ''
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(NAVY).text(label, 65, y, { width: W - 180 })
-        if (prix) doc.font('Helvetica').fontSize(9).fillColor(TEAL).text(prix, 400, y, { width: 145, align: 'right' })
+        const prix  = act.prix ? `${fmtMoneyRaw(act.prix)} Ar` : ''
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(label, 65, y, { width: W - 180 })
+        if (prix) doc.font('Helvetica').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
         y += 16
         if (y > 760) { doc.addPage(); y = 60 }
       })
@@ -137,9 +182,9 @@ function generateInscriptionPDF(data) {
       section('Suppléments & Services')
       supplements.forEach(item => {
         const label = item.label || '—'
-        const prix = item.prix ? `${Number(item.prix).toLocaleString('fr-FR')} Ar` : ''
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(NAVY).text(label, 65, y, { width: W - 180 })
-        if (prix) doc.font('Helvetica').fontSize(9).fillColor(TEAL).text(prix, 400, y, { width: 145, align: 'right' })
+        const prix = item.prix ? `${fmtMoneyRaw(item.prix)} Ar` : ''
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(label, 65, y, { width: W - 180 })
+        if (prix) doc.font('Helvetica').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
         y += 16
         if (y > 760) { doc.addPage(); y = 60 }
       })
@@ -163,34 +208,51 @@ function generateInscriptionPDF(data) {
 
     // ── Pied de page ──
     const today = new Date().toLocaleDateString('fr-FR', { day:'2-digit', month:'long', year:'numeric' })
-    y = Math.max(y + 20, 720)
+    y += 10
 
-    // ── Totaux financiers ──
-    if (data.totalsCalc) {
-      const tc = data.totalsCalc
-      section('Récapitulatif financier')
-      row('Total HT', `${tc.totalHT.toLocaleString('fr-FR')} Ar`)
-      if (tc.promoAmount > 0) row('Remise promo', `-${tc.promoAmount.toLocaleString('fr-FR')} Ar`)
-      if (tc.voucherAmount > 0) row('Voucher', `-${tc.voucherAmount.toLocaleString('fr-FR')} Ar`)
-      row('Montant taxe', `${tc.montantTaxe.toLocaleString('fr-FR')} Ar`)
-      doc.font('Helvetica-Bold').fontSize(11).fillColor(NAVY).text('TOTAL TTC', 65, y, { width: 160 })
-      doc.font('Helvetica-Bold').fontSize(11).fillColor(TEAL).text(`${tc.totalTTC.toLocaleString('fr-FR')} Ar`, 400, y, { width: 145, align: 'right' })
-      y += 20
+    // --- Calcul dynamique des totaux ---
+    const totalHTStands = stands.reduce((sum, s) => sum + (Number(s.prix) || 0), 0)
+    const totalHTActs = (data.optionalActivities || []).reduce((sum, a) => sum + (Number(a.prix) || 0), 0)
+    const totalHTSupps = (data.supplements || []).reduce((sum, s) => sum + (Number(s.prix) || 0), 0)
+    const totalHT = totalHTStands + totalHTActs + totalHTSupps
+
+    const taxRate = parseFloat(data.regimeFiscal) || 0
+    const montantTaxe = totalHT * taxRate
+    const totalTTC = totalHT + montantTaxe
+
+    const taxLabels = { '0.2': 'TVA 20%', '0.08': 'Taxe 8%', '0': 'Exonéré (0%)' }
+    const currentTaxLabel = taxLabels[data.regimeFiscal] || (taxRate > 0 ? `${taxRate * 100}%` : '—')
+
+    if (y > 600) { doc.addPage(); y = 60 } // Évite de couper le tableau financier
+
+    section('Récapitulatif financier')
+    row('Total HT (Stands + Activités)', fmtMoney(totalHT))
+    row('Régime fiscal appliqué', currentTaxLabel)
+    row('Montant de la taxe', fmtMoney(montantTaxe))
+    
+    y += 5
+    doc.rect(50, y, W, 30).fill(BLEU)
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(12)
+      .text('TOTAL TTC À RÉGLER', 65, y + 9)
+    doc.text(fmtMoney(totalTTC), 400, y + 10, { width: 135, align: 'right' })
+    y += 45
+
+    if (data.totalsCalc || true) {
       separator()
 
       section('Calendrier de paiement')
       row('Date validation', data.dateValidation || '—')
       row('Acompte 50% dû le', data.dateAcompte || '—')
       row('Solde 50% dû le', data.dateSolde || '—')
-      doc.font('Helvetica').fontSize(9).fillColor(GRAY).text('Note: Les dates sont indicatives et peuvent être ajustées.', 65, y)
+      doc.font('Helvetica').fontSize(9).fillColor(GRIS).text('Note: Les dates sont indicatives et peuvent être ajustées.', 65, y)
       y += 20
       separator()
     }
 
 
-    doc.rect(50, y, W, 1).fill(TEAL)
+    doc.rect(50, y, W, 1).fill(BLEU)
     y += 10
-    doc.font('Helvetica').fontSize(8).fillColor(GRAY)
+    doc.font('Helvetica').fontSize(8).fillColor(GRIS)
       .text(`Dossier généré le ${today} — Madavision`, 50, y, { width: W, align: 'center' })
 
     doc.end()
@@ -843,11 +905,11 @@ async function mailer(to, subject, html, opts = {}) {
   }
 }
 
-function emailWrapper(bodyHtml, accentFrom = '#1B2A4A', accentTo = '#2260A7') {
+function emailWrapper(bodyHtml, accentFrom = '#195b98', accentTo = '#0d0d0d') {
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"/></head>
 <body style="font-family:Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
-  <div style="background:linear-gradient(135deg,${accentFrom} 0%,${accentTo} 100%);color:#fff;padding:28px 24px;border-radius:10px 10px 0 0">
+  <div style="background:linear-gradient(135deg,${accentFrom} 0%,${accentTo} 100%);color:#fff;padding:25px 24px;border-radius:10px 10px 0 0">
     <div style="font-size:22px;font-weight:700;margin-bottom:4px">MADAVISION</div>
     <div style="font-size:13px;opacity:.9">2026</div>
   </div>
@@ -1895,17 +1957,17 @@ app.post('/api/inscription', async (req, res) => {
       if (data.modePaiement === 'Mobile Money' && pd.operateur) {
         notes.push(`Opérateur : ${pd.operateur}`)
         if (pd.reference) notes.push(`Référence : ${pd.reference}`)
-        if (pd.montant)   notes.push(`Montant déclaré : ${Number(pd.montant).toLocaleString('fr-FR')} Ar`)
+        if (pd.montant)   notes.push(`Montant déclaré : ${fmtMoney(pd.montant)}`)
       } else if (data.modePaiement === 'Virement bancaire') {
         if (pd.banque)   notes.push(`Banque : ${pd.banque}`)
         if (pd.numOV)    notes.push(`Numéro OV : ${pd.numOV}`)
         if (pd.date)     notes.push(`Date virement : ${pd.date}`)
-        if (pd.montant)  notes.push(`Montant déclaré : ${Number(pd.montant).toLocaleString('fr-FR')} Ar`)
+        if (pd.montant)  notes.push(`Montant déclaré : ${fmtMoney(pd.montant)}`)
       } else if (data.modePaiement === 'Chèque') {
         if (pd.numeroCheque) notes.push(`N° chèque : ${pd.numeroCheque}`)
         if (pd.titulaire)    notes.push(`Titulaire : ${pd.titulaire}`)
         if (pd.date)         notes.push(`Date chèque : ${pd.date}`)
-        if (pd.montant)      notes.push(`Montant déclaré : ${Number(pd.montant).toLocaleString('fr-FR')} Ar`)
+        if (pd.montant)      notes.push(`Montant déclaré : ${fmtMoney(pd.montant)}`)
       } else if (data.modePaiement === 'À régler ultérieurement') {
         notes.push('⏳ Payer plus tard — acompte dû sous 7 jours')
       }
@@ -2125,30 +2187,30 @@ app.post('/api/inscription', async (req, res) => {
       const nomSoc       = escapeHtml(data.nomSociete || data.nomSoc || 'votre société')
       const salonLabel   = escapeHtml(data.salonLabel || data.editionLabel || '')
       const standsList   = Array.isArray(data.stands) && data.stands.length > 0
-        ? data.stands.map(s => `<li style="margin-bottom:4px"><span style="font-family:monospace;font-weight:700">${escapeHtml(s.label||s.produitId||'')}</span>${s.prix ? ` — ${Number(s.prix).toLocaleString('fr-FR')} Ar` : ''}</li>`).join('')
+        ? data.stands.map(s => `<li style="margin-bottom:4px"><span style="font-family:monospace;font-weight:700">${escapeHtml(s.label||s.produitId||'')}</span>${s.prix ? ` — ${fmtMoneyRaw(s.prix)} Ar` : ''}</li>`).join('')
         : '<li>—</li>'
 
       mailTransporter.sendMail({
         from:    `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
         to:      data.email,
         subject: `Confirmation d'inscription — ${data.nomSociete || data.nomSoc}`,
-        html: `<!DOCTYPE html>
+      html: `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"/></head>
 <body style="font-family:Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
-  <div style="background:linear-gradient(135deg,#0A7070 0%,#085959 100%);color:#fff;padding:28px 24px;border-radius:10px 10px 0 0">
+  <div style="background:linear-gradient(135deg,#195b98 0%,#0d0d0d 100%);color:#fff;padding:25px 24px;border-radius:10px 10px 0 0">
     <div style="font-size:22px;font-weight:700;margin-bottom:4px">MADAVISION</div>
     <div style="font-size:13px;opacity:.9">2026</div>
   </div>
 
   <div style="background:#fff;border:1px solid #E8E3DA;border-top:none;padding:28px 24px;border-radius:0 0 10px 10px">
-    <h2 style="color:#0A7070;font-size:18px;margin:0 0 14px 0">Votre candidature a bien été reçue !</h2>
+    <h2 style="color:#195b98;font-size:18px;margin:0 0 14px 0">Votre candidature a bien été reçue !</h2>
 
     <p>Bonjour,</p>
     <p>Nous avons enregistré l'inscription de <strong>${nomSoc}</strong>${salonLabel ? ` à la <strong>${salonLabel}</strong>` : ' à l evenement '}.</p>
 
-    <div style="background:#E6F4F4;border-left:3px solid #0A7070;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#0A7070;margin-bottom:6px">Numéro de dossier</div>
-      <div style="font-family:monospace;font-size:16px;font-weight:700;color:#085959">${numDossier}</div>
+    <div style="background:#E6F4F4;border-left:3px solid #195b98;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#195b98;margin-bottom:6px">Numéro de dossier</div>
+      <div style="font-family:monospace;font-size:16px;font-weight:700;color:#0d0d0d">${numDossier}</div>
     </div>
 
     ${standsList !== '<li>—</li>' ? `
@@ -2160,12 +2222,12 @@ app.post('/api/inscription', async (req, res) => {
     <div style="background:#FEF3E8;border:1px solid #C87B2F;border-radius:8px;padding:16px 18px;margin:20px 0">
       <div style="font-size:12px;font-weight:700;color:#C87B2F;margin-bottom:8px">🔑 Votre espace exposant</div>
       <p style="font-size:13px;margin:0 0 12px 0">Suivez votre dossier, vérifiez le statut de validation et accédez à vos documents :</p>
-      <a href="${espaceUrl}" style="background:#0A7070;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">→ Accéder à mon espace exposant</a>
+      <a href="${espaceUrl}" style="background:#195b98;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">→ Accéder à mon espace exposant</a>
       <p style="font-size:12px;color:#5C5649;margin:12px 0 0 0">Connectez-vous avec l'email utilisé pour l'inscription et le mot de passe créé dans le formulaire.</p>
       <div style="font-size:11px;color:#9B9183;margin-top:10px;word-break:break-all">${espaceUrl}</div>
     </div>
 
-    <h3 style="color:#0A7070;font-size:14px;margin:22px 0 8px 0">Prochaines étapes</h3>
+    <h3 style="color:#195b98;font-size:14px;margin:22px 0 8px 0">Prochaines étapes</h3>
     <ol style="padding-left:20px;font-size:13px;color:#5C5649">
       <li>L'Administration Madavision examine votre dossier et valide l'éligibilité de votre activité</li>
       <li>Vous recevrez un email de confirmation avec les instructions de règlement</li>
@@ -3993,7 +4055,7 @@ function invoiceTaxLabel(value, regimeFiscal = '') {
 }
 
 function invoiceFormatMoney(value) {
-  return `${invoiceMoney(value).toLocaleString('fr-FR')} Ar`
+  return `${fmtMoneyRaw(value)} Ar`
 }
 
 function invoiceFormatDate(value) {
@@ -4276,9 +4338,9 @@ function generateInvoicePDF(data) {
     doc.on('end', () => resolve(Buffer.concat(buffers)))
     doc.on('error', reject)
 
-    const NAVY = '#1B2A4A'
-    const TEAL = '#0A7070'
-    const GRAY = '#5C6670'
+    const NAVY = '#0d0d0d'
+    const BLEU = '#195b98'
+    const GRAY = '#687e7e'
     const LIGHT = '#EEF2F8'
     const W = 499
     let y = 48
@@ -4304,16 +4366,35 @@ function generateInvoicePDF(data) {
     function moneyRow(label, value, strong = false) {
       ensure(18)
       doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
-      doc.fillColor(strong ? TEAL : NAVY).font('Helvetica-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
+      doc.fillColor(strong ? BLEU : NAVY).font('Helvetica-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
       y += strong ? 18 : 15
     }
 
-    doc.rect(48, y, W, 72).fill(TEAL)
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(19).text('MADAVISION', 64, y + 16)
-    doc.font('Helvetica').fontSize(9).text('Facture exposant', 64, y + 42)
-    doc.font('Helvetica-Bold').fontSize(14).text(data.invoiceNumber, 350, y + 18, { width: 180, align: 'right' })
-    doc.font('Helvetica').fontSize(8).text(`Émise le ${new Date(data.date).toLocaleDateString('fr-FR')}`, 350, y + 42, { width: 180, align: 'right' })
-    y += 94
+    doc.rect(48, y, W, 90).fill(BLEU)
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(19).text('MADAVISION', 64, y + 14)
+    doc.font('Helvetica').fontSize(9).text('Facture exposant', 64, y + 38)
+    doc.font('Helvetica').fontSize(8).fillColor('#E6F4F4')
+    const contactParts = []
+    if (data.societe?.nif) contactParts.push(`NIF : ${data.societe.nif}`)
+    if (data.societe?.stat) contactParts.push(`STAT : ${data.societe.stat}`)
+    if (data.societe?.telephone) contactParts.push(`Tel : ${data.societe.telephone}`)
+    if (data.societe?.email) contactParts.push(`Email : ${data.societe.email}`)
+    contactParts.forEach((part, i) => {
+      doc.text(`• ${part}`, 64, y + 56 + i * 13)
+    })
+
+    const logoMadPath = '/Users/mac/Desktop/my_project/MADAVISION/madavision-react/assets/logo/madavision-logo.png'
+    if (fs.existsSync(logoMadPath)) {
+      doc.image(logoMadPath, 64, y + 12, { width: 48 })
+    }
+
+    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(14)
+      .text(data.societe?.nom || data.invoiceNumber, 350, y + 14, { width: 180, align: 'right' })
+    doc.font('Helvetica').fontSize(8)
+      .text(`Émise le ${new Date(data.date).toLocaleDateString('fr-FR')}`, 350, y + 38, { width: 180, align: 'right' })
+    doc.font('Helvetica').fontSize(8).fillColor('#E6F4F4')
+      .text(data.invoiceNumber, 350, y + 56, { width: 180, align: 'right' })
+    y += 96
 
     section('Client')
     row('Société', data.societe.nom)
@@ -4373,7 +4454,7 @@ function generateInvoicePDF(data) {
     moneyRow('Reste à payer', data.financial.resteAPayer, true)
 
     y = Math.max(y + 18, 735)
-    doc.moveTo(48, y).lineTo(547, y).strokeColor(TEAL).lineWidth(1).stroke()
+    doc.moveTo(48, y).lineTo(547, y).strokeColor(BLEU).lineWidth(1).stroke()
     y += 10
     doc.fillColor(GRAY).font('Helvetica').fontSize(7)
       .text('Facture générée automatiquement à partir des données Airtable Commandes, Stands, Éditions, Salons et Société.', 48, y, { width: W, align: 'center' })
@@ -4390,9 +4471,9 @@ function generateProformaContractPDF(data) {
     doc.on('end', () => resolve(Buffer.concat(buffers)))
     doc.on('error', reject)
 
-    const NAVY = '#1B2A4A'
-    const TEAL = '#0A7070'
-    const GRAY = '#5C6670'
+    const NAVY = '#0d0d0d'
+    const BLEU = '#195b98'
+    const GRAY = '#687e7e'
     const LIGHT = '#EEF2F8'
     const BORDER = '#D9E0EA'
     const W = 499
@@ -4404,7 +4485,7 @@ function generateProformaContractPDF(data) {
       y = 48
     }
     function header(title, subtitle) {
-      doc.rect(48, y, W, 72).fill(TEAL)
+      doc.rect(48, y, W, 72).fill(BLEU)
       doc.fillColor('#fff').font('Helvetica-Bold').fontSize(18).text('MADAVISION', 64, y + 15)
       doc.font('Helvetica').fontSize(9).text(title, 64, y + 40)
       doc.font('Helvetica-Bold').fontSize(13).text(subtitle, 335, y + 17, { width: 195, align: 'right' })
@@ -4427,7 +4508,7 @@ function generateProformaContractPDF(data) {
     function moneyRow(label, value, strong = false) {
       ensure(18)
       doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
-      doc.fillColor(strong ? TEAL : NAVY).font('Helvetica-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
+      doc.fillColor(strong ? BLEU : NAVY).font('Helvetica-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
       y += strong ? 18 : 15
     }
     function paragraph(text, options = {}) {
@@ -4438,7 +4519,7 @@ function generateProformaContractPDF(data) {
     }
     function bullet(text) {
       ensure(32)
-      doc.fillColor(TEAL).font('Helvetica-Bold').fontSize(11).text('•', 62, y)
+      doc.fillColor(BLEU).font('Helvetica-Bold').fontSize(11).text('•', 62, y)
       doc.fillColor(NAVY).font('Helvetica').fontSize(9).text(text, 78, y, { width: 455, lineGap: 3 })
       y = doc.y + 8
     }
@@ -4538,7 +4619,7 @@ function generateProformaContractPDF(data) {
     doc.moveTo(337, boxY + 72).lineTo(523, boxY + 72).strokeColor(BORDER).lineWidth(0.5).stroke()
     y = boxY + 116
 
-    doc.moveTo(48, 760).lineTo(547, 760).strokeColor(TEAL).lineWidth(1).stroke()
+    doc.moveTo(48, 760).lineTo(547, 760).strokeColor(BLEU).lineWidth(1).stroke()
     doc.fillColor(GRAY).font('Helvetica').fontSize(7)
       .text('Document généré automatiquement à partir des données Airtable Commandes, Stands, Éditions, Salons et Société.', 48, 772, { width: W, align: 'center' })
 
@@ -5547,7 +5628,7 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       }
     })
 
-    res.json({ dossiers, commerciaux })
+    res.json({ dossiers, commerciaux, airtableBaseUrl: `https://airtable.com/${BASE}` })
   } catch(e) {
     console.error('[sonia/dossiers]', e.message)
     res.status(500).json({ error: e.message })
