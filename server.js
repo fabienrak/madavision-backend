@@ -274,14 +274,15 @@ async function generateInscriptionPDF(data) {
     if (y > 600) { doc.addPage(); y = 60 } // Évite de couper le tableau financier
 
     section('Récapitulatif financier')
-    row('Total HT (Stands + Activités)', fmtMoney(totalHT))
+    // row('Total TTC (Stands + Activités)', fmtMoney(totalHT))
+    row('Total HT (Stands + Activités)', fmtMoney(montantHT))
     row('Régime fiscal appliqué', currentTaxLabel)
     row('Montant de la taxe', fmtMoney(montantTaxe))
     
     y += 8
     doc.rect(50, y, W, 30).fill(BLEU)
     doc.fillColor('#fff').font('Poppins-Bold').fontSize(12)
-       .text('MONTANT TOTAL (nets inclus)', 65, y + 9)
+       .text('MONTANT TOTAL TTC', 65, y + 9)
     doc.text(fmtMoney(montantTTC), 400, y + 10, { width: 135, align: 'right' })
     y += 50
 
@@ -4589,20 +4590,18 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
     if (clean) lines.push({ label: clean, description: 'Supplément', qty: 1, amount: 0 })
   })
 
-  // CALCUL DE SÉCURITÉ : Recalcul HT brut depuis les lignes réelles (Stands + Activités)
-  const montantHT = lines.reduce((sum, item) => sum + invoiceMoney(item.amount) * (Number(item.qty) || 1), 0)
-  
   const remisePromo = invoicePickMoney(cf, ['Montant remise promo', 'Remise promo', 'Remise accordée'], 0)
   const voucherAmount = invoicePickMoney(cf, ['Montant voucher appliqué', 'Voucher appliqué', 'Montant voucher'], 0)
-
   const rawTax = sf['Régime fiscal'] || sf['Regime fiscal'] || '0.2'
   const taxRate = String(rawTax).includes('20') ? 0.2 : String(rawTax).includes('8') ? 0.08 : parseFloat(rawTax) || 0
-  
-  // Formule Airtable : Taxe sur HT brut, Remises sur le TTC total
+
+  // CALCUL DE SÉCURITÉ : Les montants ligne sont déjà TTC (taxe incluse)
+  // On extrait le HT à rebours, identique aux formules Airtable
+  const montantTTC = lines.reduce((sum, item) => sum + invoiceMoney(item.amount) * (Number(item.qty) || 1), 0)
+  const montantHT  = taxRate > 0 ? Math.round(montantTTC / (1 + taxRate)) : montantTTC
   const montantTaxe = Math.round(montantHT * taxRate)
-  const totalTTCBase = montantHT + montantTaxe
-  const netAPayer = Math.max(0, totalTTCBase - remisePromo - voucherAmount)
-  const totalTTC = netAPayer // On utilise le Net comme montant TTC final
+  const totalTTC = montantTTC
+  const netAPayer = Math.max(0, totalTTC - remisePromo - voucherAmount)
   const montantEncaisse = invoicePickMoney(cf, ['Montant encaissé', 'Montant soldé', 'Montant deja payer', 'Montant déjà payé'], 0)
   const resteAPayer = invoicePickMoney(cf, ['Reste à payer'], Math.max(0, totalTTC - montantEncaisse))
 
@@ -5462,7 +5461,7 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
         statutCommande: cf['Statut commande'],
         validation: cf['Validation'],
         montantTotal: netAPayer,
-        montantHT: totalHT,
+        montantHT: montantHT,
         montantTaxe: montantTaxe,
         pourcentageTaxe: cf['Pourcentage Taxe'] || '',
         tauxTva: cf['Pourcentage Taxe'] || sf['Régime fiscal'] || '',
