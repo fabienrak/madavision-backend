@@ -2007,7 +2007,13 @@ app.post('/api/inscription', async (req, res) => {
       'Date commande':   new Date().toISOString().slice(0, 10),
       'Notes':           notes.join('\n'),
       'Activités optionnelles': data.activitesOptionnellesIds || [],
-      'Token d\'accès':   accessToken
+      "Token d'accès":   accessToken,
+    }
+    if (data.editionId) {
+      cmdFields['Édition'] = [data.editionId]
+    }
+    if (data.salonId) {
+      cmdFields['Salon'] = [data.salonId]
     }
     if (data.descriptionActivite) {
       cmdFields['Description activités'] = data.descriptionActivite
@@ -5179,8 +5185,8 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
     const activityIds = new Set()
     const salonIds = new Set()
     const editionIds = new Set()
-    // const activityMap = {}
-    // const editionMap = {}
+    const activityMap = {}
+    const editionMap = {}
 
     filteredRecords.forEach(r => {
       const f = r.fields || {}
@@ -5209,22 +5215,6 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
     }
 
     // ── Fetch Activités en batch ─────────────────────────────────────
-    // const activityMap = {}
-    if (activityIds.size > 0) {
-      try {
-        const ids = [...activityIds]
-        const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
-        const actResp = await fetch(`${ATBASE}/${encodeURIComponent('Activités optionnelles')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json())
-        ;(actResp.records || []).forEach(r => {
-          const f = r.fields
-          activityMap[r.id] = {
-            prix: parseFloat(String(f['Prix unitaire'] || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
-          }
-        })
-      } catch(e) { console.warn('[sonia] batch activities failed:', e.message) }
-    }
-
-    // ── Fetch Activités en batch ─────────────────────────────────────
     if (activityIds.size > 0) {
       try {
         const ids = [...activityIds]
@@ -5239,7 +5229,7 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
       } catch(e) { console.warn('[commercial] batch activities failed:', e.message) }
     }
 
-    const editionMap = {}
+    // const editionMap = {}
     if (editionIds.size > 0) {
       const ids = [...editionIds]
       const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
@@ -5327,9 +5317,9 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
         evenementId: evenement?.id || null,
         evenement,
         societe,
-        commandes: [{ id: r.id, stand: standsLabel, montant: netAPayer, reste: resteAPayer, statut: f['Statut commande'] || '—' }],
+        commandes: [{ id: r.id, stand: standsLabel, montant: montantTotal, reste: resteAPayer, statut: f['Statut commande'] || '—' }],
         numDossier: f['Numero de dossier'] || f['ID Commande'] || r.id.slice(-8).toUpperCase(),
-        montantTotal: netAPayer,
+        montantTotal: montantTotal,
         resteAPayer,
         montantEncaisse,
         paiements,
