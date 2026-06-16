@@ -10,29 +10,89 @@ const PDFDocument = require('pdfkit')
 const fs         = require('fs')
 const path       = require('path')
 const crypto     = require('crypto')
+const cloudinary = require('cloudinary').v2
 require('dotenv').config()
+
+cloudinary.config({
+  cloud_name: 'dcypbnvgc',
+  api_key: '696412765765453',
+  api_secret: 'ptZZjJyHWBn549B8LKbXfb7qCSQ'
+})
 
 // Dossier d'uploads pour les BCs et dossiers exposants
 const UPLOADS_DIR = path.join(__dirname, 'uploads')
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true })
 
 function fmtMoney(value) {
-  const n = Number(value || 0)
-  return n.toLocaleString('fr-FR').replace(/\s/g, '.') + ' Ar'
+  const n = Math.round(Number(value || 0))
+  return n.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\s/g, '.') + ' Ar'
 }
+const FONT_DIR = '/Users/mac/Desktop/my_project/MADAVISION/madavision-react/assets/fonts/'
 
 function fmtMoneyRaw(value) {
-  return Number(value || 0).toLocaleString('fr-FR').replace(/\s/g, '.')
+  const n = Math.round(Number(value || 0))
+  return n.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\s/g, '.')
+}
+
+/**
+ * Enregistre la famille Poppins dans un document PDFKit
+ */
+function registerFonts(doc) {
+  try {
+    doc.registerFont('Poppins-Light',   path.join(FONT_DIR, 'Poppins-Light.ttf'))
+    doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
+    doc.registerFont('Poppins-Medium',  path.join(FONT_DIR, 'Poppins-Medium.ttf'))
+    doc.registerFont('Poppins-Bold',    path.join(FONT_DIR, 'Poppins-Bold.ttf'))
+  } catch (e) {
+    console.warn('⚠ Impossible de charger Poppins pour le PDF, repli sur Helvetica:', e.message)
+  }
+}
+
+/**
+ * Télécharge une image depuis une URL pour PDFKit
+ */
+async function fetchImageBuffer(url) {
+  if (!url) return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    return Buffer.from(await res.arrayBuffer())
+  } catch (e) {
+    console.warn(`[PDF] Erreur téléchargement logo : ${url}`, e.message)
+    return null
+  }
+}
+
+/**
+ * Télécharge une image vers Cloudinary si nécessaire et retourne l'URL sécurisée
+ */
+async function handleImageUpload(input, folder = 'logos') {
+  if (!input) return null
+  // Si c'est déjà une URL HTTP, on ne fait rien
+  if (String(input).startsWith('http')) return input
+  try {
+    const res = await cloudinary.uploader.upload(input, {
+      folder: `madavision/${folder}`,
+    })
+    return res.secure_url
+  } catch (e) {
+    console.error('[Cloudinary] Erreur upload :', e.message)
+    return null
+  }
 }
 
 // ── Génération PDF du dossier d'inscription ──────────────────
-function generateInscriptionPDF(data) {
+async function generateInscriptionPDF(data) {
+  const logoExposantBuffer = await fetchImageBuffer(data.logoSocieteUrl)
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 50, compress: true })
     const bufs = []
     doc.on('data', b => bufs.push(b))
     doc.on('end',  () => resolve(Buffer.concat(bufs)))
     doc.on('error', reject)
+
+    registerFonts(doc)
 
     const BLEU  = '#195b98'
     const GRIS  = '#687e7e'
@@ -48,37 +108,24 @@ function generateInscriptionPDF(data) {
       doc.image(logoMadPath, 65, 60, { width: 55 })
     }
 
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(13)
+    doc.fillColor('#fff').font('Poppins-Bold').fontSize(13)
       .text('MADAVISION', 130, 60)
-    doc.font('Helvetica').fontSize(7).fillColor('#E6F4F4')
-      .text('Foire Internationale de Madagascar — 2026', 130, 75)
-
-    // Liste des informations société à gauche (sous le titre)
-    const contactParts = [];
-    if (data.nif) contactParts.push(`NIF : ${data.nif}`);
-    if (data.stat) contactParts.push(`STAT : ${data.stat}`);
-    if (data.telephone) contactParts.push(`Tel : ${data.telephone}`);
-    if (data.email) contactParts.push(`Email : ${data.email}`);
-    if (data.siteWeb) contactParts.push(`Site web : ${data.siteWeb}`);
-    if (data.adresse) contactParts.push(`Adresse : ${data.adresse}`);
-
-    doc.font('Helvetica').fontSize(8).fillColor('#E6F4F4');
-    contactParts.forEach((part, i) => {
-      doc.text(`• ${part}`, 130, 90 + i * 11);
-    });
+    doc.font('Poppins-Regular').fontSize(7.5).fillColor('#E6F4F4')
+      .text('NIF : 3000001053 • STAT : 92391 11 1993 0 00002', 130, 75)
+      .text('Enceinte Gare Soarano, Analakely, Antananarivo', 130, 85)
+      .text('Tel : +261 20 22 235 44 • Email : contact@madavision.mg', 130, 95)
+      .text('www.madavision.mg', 130, 105)
 
     // Logo exposant ou Nom à droite
     const nomSocPdf = data.nomSociete || data.nomSoc || ''
     if (nomSocPdf) {
-      doc.fillColor('#fff').font('Helvetica-Bold').fontSize(11)
+      doc.fillColor('#fff').font('Poppins-Bold').fontSize(11)
         .text(nomSocPdf.toUpperCase(), 380, 60, { width: 155, align: 'right' })
-      doc.fillColor('#E6F4F4').font('Helvetica').fontSize(7)
+      doc.fillColor('#E6F4F4').font('Poppins-Regular').fontSize(7)
         .text('SOCIÉTÉ EXPOSANTE', 380, 75, { width: 155, align: 'right' })
-      
-      // Si un logo société est présent dans data
-      if (data.logoSocieteUrl) {
-        // Note: nécessite que l'image soit accessible localement ou téléchargée
-        // doc.image(data.logoSocieteUrl, 480, 90, { width: 40 });
+
+      if (logoExposantBuffer) {
+        doc.image(logoExposantBuffer, 495, 85, { width: 40 })
       }
     }
 
@@ -86,14 +133,14 @@ function generateInscriptionPDF(data) {
 
     // --- Numéro de dossier ---
     doc.rect(50, y, W, 40).fillAndStroke('#E6F4F4', BLEU)
-    doc.fillColor(BLEU).font('Helvetica-Bold').fontSize(10).text('NUMÉRO DE DOSSIER', 65, y + 8)
-    doc.font('Courier-Bold').fontSize(16).text(data.numDossier || '—', 65, y + 22)
+    doc.fillColor(BLEU).font('Poppins-Bold').fontSize(10).text('NUMÉRO DE DOSSIER', 65, y + 8)
+    doc.font('Poppins-Bold').fontSize(16).text(data.numDossier || '—', 65, y + 22)
     doc.fillColor(NOIR)
     y += 58
 
     function section(title) {
       doc.rect(50, y, W, 24).fill('#F5F3EF')
-      doc.fillColor(BLEU).font('Helvetica-Bold').fontSize(9)
+      doc.fillColor(BLEU).font('Poppins-Bold').fontSize(9)
         .text(title.toUpperCase(), 65, y + 8)
       doc.fillColor(NOIR)
       y += 32
@@ -102,8 +149,8 @@ function generateInscriptionPDF(data) {
     function row(label, value, indent = 65) {
       if (!value) return
       if (y > 760) { doc.addPage(); y = 60 }
-      doc.font('Helvetica').fontSize(9).fillColor(GRIS).text(label, indent, y, { width: 160 })
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(String(value), indent + 165, y, { width: W - 165 - 15, align: 'right' })
+      doc.font('Poppins-Regular').fontSize(9).fillColor(GRIS).text(label, indent, y, { width: 160 })
+      doc.font('Poppins-Bold').fontSize(9).fillColor(NOIR).text(String(value), indent + 165, y, { width: W - 165 - 15, align: 'right' })
       y += 16
     }
 
@@ -147,14 +194,14 @@ function generateInscriptionPDF(data) {
     section('Stands réservés')
     const stands = Array.isArray(data.stands) ? data.stands : []
     if (stands.length === 0) {
-      doc.font('Helvetica').fontSize(9).fillColor(GRIS).text('—', 65, y); y += 16
+      doc.font('Poppins-Regular').fontSize(9).fillColor(GRIS).text('—', 65, y); y += 16
     } else {
       stands.forEach(s => {
         const label = s.label || s.produitId || '—'
         const surf  = s.surface ? `  ${String(s.surface).replace(/\s*m²?/i,'')} m²` : ''
         const prix  = s.prix ? `${fmtMoneyRaw(s.prix)} Ar` : ''
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(label + surf, 65, y, { width: W - 180 })
-        if (prix) doc.font('Helvetica').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
+        doc.font('Poppins-Bold').fontSize(9).fillColor(NOIR).text(label + surf, 65, y, { width: W - 180 })
+        if (prix) doc.font('Poppins-Regular').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
         y += 16
         if (y > 760) { doc.addPage(); y = 60 }
       })
@@ -168,8 +215,8 @@ function generateInscriptionPDF(data) {
       optActs.forEach(act => {
         const label = act.label || '—'
         const prix  = act.prix ? `${fmtMoneyRaw(act.prix)} Ar` : ''
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(label, 65, y, { width: W - 180 })
-        if (prix) doc.font('Helvetica').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
+        doc.font('Poppins-Bold').fontSize(9).fillColor(NOIR).text(label, 65, y, { width: W - 180 })
+        if (prix) doc.font('Poppins-Regular').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
         y += 16
         if (y > 760) { doc.addPage(); y = 60 }
       })
@@ -183,8 +230,8 @@ function generateInscriptionPDF(data) {
       supplements.forEach(item => {
         const label = item.label || '—'
         const prix = item.prix ? `${fmtMoneyRaw(item.prix)} Ar` : ''
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(NOIR).text(label, 65, y, { width: W - 180 })
-        if (prix) doc.font('Helvetica').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
+        doc.font('Poppins-Bold').fontSize(9).fillColor(NOIR).text(label, 65, y, { width: W - 180 })
+        if (prix) doc.font('Poppins-Regular').fontSize(9).fillColor(BLEU).text(prix, 400, y, { width: 145, align: 'right' })
         y += 16
         if (y > 760) { doc.addPage(); y = 60 }
       })
@@ -230,12 +277,33 @@ function generateInscriptionPDF(data) {
     row('Régime fiscal appliqué', currentTaxLabel)
     row('Montant de la taxe', fmtMoney(montantTaxe))
     
-    y += 5
+    y += 8
     doc.rect(50, y, W, 30).fill(BLEU)
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(12)
-      .text('TOTAL TTC À RÉGLER', 65, y + 9)
+    doc.fillColor('#fff').font('Poppins-Bold').fontSize(12)
+      .text('MONTANT TOTAL TTC', 65, y + 9)
     doc.text(fmtMoney(totalTTC), 400, y + 10, { width: 135, align: 'right' })
-    y += 45
+    y += 50
+
+    // --- MODALITÉS DE RÈGLEMENT ---
+    if (y > 620) { doc.addPage(); y = 60 }
+    doc.rect(50, y, W, 20).fill('#F5F3EF')
+    doc.fillColor(BLEU).font('Poppins-Bold').fontSize(9).text('MODALITÉS DE RÈGLEMENT', 65, y + 6)
+    y += 30
+
+    // RIB
+    doc.fillColor(NOIR).font('Poppins-Bold').fontSize(8).text('VIREMENT BANCAIRE OU CHÈQUE', 65, y)
+    doc.font('Poppins-Regular').fontSize(8).fillColor(GRIS)
+      .text('Banque : BNI MADAGASCAR - Agence : ANALAKELY', 65, y + 12)
+      .text('Compte : 00005 01010 12345678901 23', 65, y + 24)
+      .text('Ordre : MADAVISION', 65, y + 36)
+
+    // Mobile Money
+    doc.fillColor(NOIR).font('Poppins-Bold').fontSize(8).text('MOBILE MONEY', 300, y)
+    doc.font('Poppins-Regular').fontSize(8).fillColor(GRIS)
+      .text('MVOLA : 034 02 235 44', 300, y + 12)
+      .text('AIRTEL MONEY : 033 02 235 44', 300, y + 24)
+      .text('ORANGE MONEY : 032 02 235 44', 300, y + 36)
+    y += 60
 
     if (data.totalsCalc || true) {
       separator()
@@ -244,7 +312,7 @@ function generateInscriptionPDF(data) {
       row('Date validation', data.dateValidation || '—')
       row('Acompte 50% dû le', data.dateAcompte || '—')
       row('Solde 50% dû le', data.dateSolde || '—')
-      doc.font('Helvetica').fontSize(9).fillColor(GRIS).text('Note: Les dates sont indicatives et peuvent être ajustées.', 65, y)
+      doc.font('Poppins-Regular').fontSize(9).fillColor(GRIS).text('Note: Les dates sont indicatives et peuvent être ajustées.', 65, y)
       y += 20
       separator()
     }
@@ -252,7 +320,7 @@ function generateInscriptionPDF(data) {
 
     doc.rect(50, y, W, 1).fill(BLEU)
     y += 10
-    doc.font('Helvetica').fontSize(8).fillColor(GRIS)
+    doc.font('Poppins-Regular').fontSize(8).fillColor(GRIS)
       .text(`Dossier généré le ${today} — Madavision`, 50, y, { width: W, align: 'center' })
 
     doc.end()
@@ -909,6 +977,11 @@ function emailWrapper(bodyHtml, accentFrom = '#195b98', accentTo = '#0d0d0d') {
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"/></head>
 <body style="font-family:Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
+<html><head>
+  <meta charset="UTF-8"/>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body style="font-family:'Poppins',Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
   <div style="background:linear-gradient(135deg,${accentFrom} 0%,${accentTo} 100%);color:#fff;padding:25px 24px;border-radius:10px 10px 0 0">
     <div style="font-size:22px;font-weight:700;margin-bottom:4px">MADAVISION</div>
     <div style="font-size:13px;opacity:.9">2026</div>
@@ -1204,9 +1277,8 @@ app.get('/api/health', (req, res) => {
 // ── /api/bootstrap — charge tout ce qu'il faut au formulaire ──
 app.get('/api/bootstrap', async (req, res) => {
   try {
-    const [salonsResp, editionsResp, catalogueResp, codesPromoResp, schemaResp, optActResp] = await Promise.all([
+    const [salonsResp, catalogueResp, codesPromoResp, schemaResp, optActResp] = await Promise.all([
       atGet('Salons').catch(e => { console.warn('[bootstrap] Salons fetch failed:', e.message); return [] }),
-      atGet('Éditions').catch(e => { console.warn('[bootstrap] Éditions fetch failed:', e.message); return [] }),
       atGet('Stands'),
       atGet('Codes promo').catch(() => []),
       fetch(`https://api.airtable.com/v0/meta/bases/${BASE}/tables`, {
@@ -1215,111 +1287,40 @@ app.get('/api/bootstrap', async (req, res) => {
       atGet('Activités optionnelles').catch(() => []),
     ])
 
-    console.log(`[bootstrap] Salons: ${salonsResp.length}, Éditions: ${editionsResp.length}, Stands: ${catalogueResp.length}`)
+    console.log(`[bootstrap] Salons: ${salonsResp.length}, Stands: ${catalogueResp.length}`)
     if (salonsResp.length > 0) {
       console.log('[bootstrap] Salons fields:', Object.keys(salonsResp[0].fields))
       console.log('[bootstrap] Salons[0]:', JSON.stringify(salonsResp[0].fields).slice(0, 200))
     }
 
-    // ── Relation inverse Éditions → Salons ──
-    // Si le champ "Éditions" du Salon est vide, on cherche dans les champs
-    // de back-link possibles sur les enregistrements Éditions.
-    const salonToEditionsMap = {}
-    editionsResp.forEach(r => {
-      const ef = r.fields
-      // Noms de champ courants pour le lien retour vers Salons
-      const linked = ef['Salon'] || ef['Salons'] || ef['Salon lié'] || ef['ID Salon'] || []
-      const ids = Array.isArray(linked) ? linked : (linked ? [linked] : [])
-      ids.filter(Boolean).forEach(salonId => {
-        if (!salonToEditionsMap[salonId]) salonToEditionsMap[salonId] = []
-        if (!salonToEditionsMap[salonId].includes(r.id)) {
-          salonToEditionsMap[salonId].push(r.id)
-        }
-      })
-    })
-
     // ── Salons (pour Step 1 inscription) ──────────────────────
     const salons = salonsResp.map(r => {
       const f = r.fields
-      // Essayer tous les noms de champ possibles pour le lien Salon→Éditions
-      const directEditionIds =
-        f['Éditions'] || f['Editions'] || f['Edition'] || f['Édition'] || []
-      // Compléter avec la relation inverse si le champ direct est vide
-      const editionIds = directEditionIds.length > 0
-        ? directEditionIds
-        : (salonToEditionsMap[r.id] || [])
-
-      if (DEBUG) {
-        console.log(`[bootstrap] Salon "${f['Nom du salon'] || f['ID Salon']}" → editionIds:`, editionIds)
-      }
-
       return {
         airtableId:  r.id,
         idSalon:     f['ID Salon']      || '',
         label:       f['Nom du salon']  || f['Nom'] || f['Name'] || f['ID Salon'] || '—',
+        edition:     f['Edition']       || f['Édition'] || f['Nom édition'] || f['Année'] || '',
         description: f['Description']  || f['Notes'] || '',
-        lieu:        f['Lieu'] || f['Ville'] || '',
+        lieu:        f['Lieu'] || f['Ville'] || f['Lieu du salon'] || '',
         statut:      f['Statut'] || 'Actif',
-        dateDebut:   f['Date début']   || f['Date de début'] || '',
-        dateFin:     f['Date fin']     || f['Date de fin']   || '',
-        editionIds,
+        dateDebut:   f['Date début']   || f['Date de début'] || f['Date debut'] || f['Date de debut'] || '',
+        dateFin:     f['Date fin']     || f['Date de fin']   || f['Date fin']   || f['Date de fin']   || '',
+        editionIds:  [r.id], // Désormais l'ID du Salon sert d'ID d'édition
         logo:        f['Logo']?.[0]?.url || null,
         planMasseUrl: attachmentUrl(f, PLAN_MASSE_FIELDS),
       }
     })
 
-    // ── Éditions ouvertes ──
-    const editions = editionsResp
-      .filter(r => {
-        const statut = r.fields['Statut'] || ''
-        return !['Fermé','Clôturé','Archivé','Annulé'].includes(statut)
-      })
-      .map(r => ({
-        id: r.id,
-        nom: r.fields['Nom édition'] || (r.fields['Année'] ? `Édition ${r.fields['Année']}` : 'Édition'),
-        annee:     r.fields['Année'] || '',
-        dateDebut: r.fields['Date début'] || '',
-        dateFin:   r.fields['Date fin'] || '',
-        lieu:      r.fields['Lieu'] || '',
-        statut:    r.fields['Statut'] || '',
-      }))
-
-    // ── Fallback dates/lieu depuis l'édition liée si le salon n'a pas ces infos ──
-    salons.forEach(salon => {
-      if (!salon.dateDebut || !salon.dateFin || !salon.lieu) {
-        const linkedEd = editions.find(e => salon.editionIds.includes(e.id))
-        if (linkedEd) {
-          if (!salon.dateDebut) salon.dateDebut = linkedEd.dateDebut
-          if (!salon.dateFin)   salon.dateFin   = linkedEd.dateFin
-          if (!salon.lieu)      salon.lieu      = linkedEd.lieu
-        }
-      }
-    })
-
-    // ── Map inverse : editionId → [salonId, ...] ──
-    // Permet de remonter la chaîne Stand → Édition → Salon sans requête supplémentaire.
-    const editionToSalonsMap = {}
-    Object.entries(salonToEditionsMap).forEach(([salonId, edIds]) => {
-      edIds.forEach(edId => {
-        if (!editionToSalonsMap[edId]) editionToSalonsMap[edId] = []
-        if (!editionToSalonsMap[edId].includes(salonId)) {
-          editionToSalonsMap[edId].push(salonId)
-        }
-      })
-    })
-    // Compléter depuis les salons dont editionIds vient du champ direct (f['Éditions']...)
-    salons.forEach(salon => {
-      salon.editionIds.forEach(edId => {
-        if (!editionToSalonsMap[edId]) editionToSalonsMap[edId] = []
-        if (!editionToSalonsMap[edId].includes(salon.airtableId)) {
-          editionToSalonsMap[edId].push(salon.airtableId)
-        }
-      })
-    })
-
-    if (DEBUG) {
-      console.log('[bootstrap] editionToSalonsMap:', JSON.stringify(editionToSalonsMap))
-    }
+    // ── Les Éditions sont maintenant mappées directement depuis les Salons ──
+    const editions = salons.map(s => ({
+      id:        s.airtableId,
+      nom:       s.edition || s.label,
+      dateDebut: s.dateDebut,
+      dateFin:   s.dateFin,
+      lieu:      s.lieu,
+      statut:    s.statut
+    }))
 
     // ── Catalogue stands actifs (depuis table Stands) ──
     const catalogue = catalogueResp
@@ -1330,20 +1331,9 @@ app.get('/api/bootstrap', async (req, res) => {
       .map(r => {
         const f = r.fields
 
-        // CAS 1 (votre config) : champ "Editions" dans Stands lie DIRECTEMENT aux Salons
-        // → f['Editions'] contient déjà les record IDs des Salons
-        const directSalonIds = f['Editions'] || f['Éditions'] || []
-
-        // CAS 2 (config alternative) : champ "Edition" lie aux Éditions, on remonte via la map
-        const indirectEditionIds = f['Édition'] || f['Edition'] || []
-        const computedSalonIds   = indirectEditionIds.flatMap(edId => editionToSalonsMap[edId] || [])
-
-        // Fusionner les deux sources (dédoublonné)
-        const salonIds = [...new Set([...directSalonIds, ...computedSalonIds])]
-
-        if (DEBUG) {
-          console.log(`[bootstrap] Stand ${f['ID Stand']} → Editions(direct): ${JSON.stringify(directSalonIds)} | computed: ${JSON.stringify(computedSalonIds)} → salonIds: ${JSON.stringify(salonIds)}`)
-        }
+        // Le champ 'Édition' dans Stands pointe maintenant vers la table Salons
+        const standSalonIds = f['Édition'] || f['Edition'] || f['Editions'] || f['Éditions'] || []
+        const salonIds = Array.isArray(standSalonIds) ? standSalonIds : [standSalonIds]
 
         return {
           airtableId:  r.id,
@@ -1684,6 +1674,8 @@ app.post('/api/inscription', async (req, res) => {
     // ── Normalisation champs React (nomSoc, contact) vs legacy (nomSociete, prenom+nom) ──
     const data = {
       ...raw,
+      logoUrl: raw.logoUrl || raw.logoSocieteUrl || raw.logoParticipation || raw.logo || '',
+      originCommercialId: raw.originCommercialId || null,
       nomSociete: raw.nomSociete || raw.nomSoc || '',
       prenom: raw.prenom || (raw.contact ? (raw.contact.trim().split(/\s+/).length > 1 ? raw.contact.trim().split(/\s+/).slice(0,-1).join(' ') : raw.contact) : ''),
       nom:    raw.nom    || (raw.contact ? raw.contact.trim().split(/\s+/).slice(-1)[0] : ''),
@@ -1847,6 +1839,9 @@ app.post('/api/inscription', async (req, res) => {
       }
     }
 
+    // ── NOUVEAU : Traitement du logo via Cloudinary ──
+    data.logoUrl = await handleImageUpload(data.logoUrl)
+
     // ── 1. SOCIÉTÉ — utiliser l'ID connu (depuis recherche), chercher, ou créer ──
     let socId
     const validRegimes = ['0.2', '0.08', '0']
@@ -1867,6 +1862,12 @@ app.post('/api/inscription', async (req, res) => {
       if (data.telephone)     updateFields['Téléphone']          = data.telephone
       if (data.contact)       updateFields['Contact principal']  = data.contact
       if (data.fonction)      updateFields['Fonction contact']   = data.fonction
+      if (data.logoUrl) {
+        updateFields['Logo'] = [{ url: data.logoUrl }]
+      }
+      if (data.originCommercialId) {
+        updateFields['Commerciaux'] = [data.originCommercialId]
+      }
       if (data.nbMembres || data.nombreMembres) {
         const n = parseInt(data.nbMembres || data.nombreMembres)
         if (!isNaN(n)) updateFields['Nombre de membres'] = n
@@ -1899,6 +1900,12 @@ app.post('/api/inscription', async (req, res) => {
           'Contact principal': `${data.prenom} ${data.nom}`.trim(),
           'Fonction contact':  data.fonction || '',
           'Régime fiscal':     regimeFiscalValue,
+        }
+        if (data.logoUrl) {
+          socFields['Logo'] = [{ url: data.logoUrl }]
+        }
+        if (data.originCommercialId) {
+          socFields['Commerciaux'] = [data.originCommercialId]
         }
         if (data.secteur)   socFields["Secteur d'activité"] = data.secteur
         if (data.nif)       socFields['NIF']  = data.nif
@@ -2164,6 +2171,7 @@ app.post('/api/inscription', async (req, res) => {
         contact:          data.contact       || '',
         fonction:         data.fonction      || '',
         email:            data.email         || '',
+        logoSocieteUrl:   data.logoUrl       || data.logoSocieteUrl || '',
         telephone:        data.telephone     || '',
         regimeFiscal:     data.regimeFiscal  || '',
         stands:           data.stands        || [],
@@ -2186,64 +2194,42 @@ app.post('/api/inscription', async (req, res) => {
       const numDossier   = cmd.id.slice(-8).toUpperCase()
       const nomSoc       = escapeHtml(data.nomSociete || data.nomSoc || 'votre société')
       const salonLabel   = escapeHtml(data.salonLabel || data.editionLabel || '')
-      const standsList   = Array.isArray(data.stands) && data.stands.length > 0
-        ? data.stands.map(s => `<li style="margin-bottom:4px"><span style="font-family:monospace;font-weight:700">${escapeHtml(s.label||s.produitId||'')}</span>${s.prix ? ` — ${fmtMoneyRaw(s.prix)} Ar` : ''}</li>`).join('')
-        : '<li>—</li>'
+
+      const emailHtml = emailWrapper(`
+        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Confirmation d'inscription — ${numDossier}</h2>
+        <p>Bonjour,</p>
+        <p>Nous avons bien enregistré l'inscription de <strong>${nomSoc}</strong> à l'événement <strong>${salonLabel}</strong>.</p>
+        
+        <div style="background:#F5F7FA;border-left:4px solid #195b98;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+          <div style="font-size:13px;color:#687e7e;margin-bottom:4px">Numéro de dossier</div>
+          <div style="font-size:20px;font-weight:700;color:#195b98;font-family:monospace">${numDossier}</div>
+        </div>
+
+        <p style="font-size:14px;color:#0d0d0d">
+          Vous trouverez ci-joint votre <strong>document d'inscription récapitulatif</strong> contenant le détail de votre réservation ainsi que nos <strong>coordonnées bancaires et Mobile Money</strong> pour le règlement de votre acompte.
+        </p>
+
+        <div style="background:#FEF3E8;border:1px solid #C87B2F;border-radius:12px;padding:18px;margin:24px 0">
+          <div style="font-size:12px;font-weight:700;color:#C87B2F;margin-bottom:8px;text-transform:uppercase">🔑 Votre espace exposant</div>
+          <p style="font-size:13px;margin:0 0 14px;color:#6d441f">Accédez à votre dossier, déclarez vos paiements et téléchargez vos factures :</p>
+          <a href="${espaceUrl}" style="background:#195b98;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
+        </div>
+
+        <h3 style="color:#195b98;font-size:14px;margin:22px 0 8px">Prochaines étapes</h3>
+        <ol style="padding-left:20px;font-size:13px;color:#687e7e;line-height:1.6">
+          <li>Validation de votre éligibilité par l'administration (24-48h).</li>
+          <li>Paiement de l'acompte de 50% via les modes indiqués dans le PDF joint.</li>
+          <li>Signature du contrat définitif.</li>
+        </ol>
+
+        <p style="margin-top:24px;font-size:13px;color:#0d0d0d">Cordialement,<br/><strong>L'Administration Madavision</strong></p>
+      `)
 
       mailTransporter.sendMail({
         from:    `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
         to:      data.email,
         subject: `Confirmation d'inscription — ${data.nomSociete || data.nomSoc}`,
-      html: `<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/></head>
-<body style="font-family:Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
-  <div style="background:linear-gradient(135deg,#195b98 0%,#0d0d0d 100%);color:#fff;padding:25px 24px;border-radius:10px 10px 0 0">
-    <div style="font-size:22px;font-weight:700;margin-bottom:4px">MADAVISION</div>
-    <div style="font-size:13px;opacity:.9">2026</div>
-  </div>
-
-  <div style="background:#fff;border:1px solid #E8E3DA;border-top:none;padding:28px 24px;border-radius:0 0 10px 10px">
-    <h2 style="color:#195b98;font-size:18px;margin:0 0 14px 0">Votre candidature a bien été reçue !</h2>
-
-    <p>Bonjour,</p>
-    <p>Nous avons enregistré l'inscription de <strong>${nomSoc}</strong>${salonLabel ? ` à la <strong>${salonLabel}</strong>` : ' à l evenement '}.</p>
-
-    <div style="background:#E6F4F4;border-left:3px solid #195b98;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#195b98;margin-bottom:6px">Numéro de dossier</div>
-      <div style="font-family:monospace;font-size:16px;font-weight:700;color:#0d0d0d">${numDossier}</div>
-    </div>
-
-    ${standsList !== '<li>—</li>' ? `
-    <div style="margin:18px 0">
-      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#666;margin-bottom:8px">Stands réservés</div>
-      <ul style="padding-left:18px;font-size:13px;color:#333;margin:0">${standsList}</ul>
-    </div>` : ''}
-
-    <div style="background:#FEF3E8;border:1px solid #C87B2F;border-radius:8px;padding:16px 18px;margin:20px 0">
-      <div style="font-size:12px;font-weight:700;color:#C87B2F;margin-bottom:8px">🔑 Votre espace exposant</div>
-      <p style="font-size:13px;margin:0 0 12px 0">Suivez votre dossier, vérifiez le statut de validation et accédez à vos documents :</p>
-      <a href="${espaceUrl}" style="background:#195b98;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">→ Accéder à mon espace exposant</a>
-      <p style="font-size:12px;color:#5C5649;margin:12px 0 0 0">Connectez-vous avec l'email utilisé pour l'inscription et le mot de passe créé dans le formulaire.</p>
-      <div style="font-size:11px;color:#9B9183;margin-top:10px;word-break:break-all">${espaceUrl}</div>
-    </div>
-
-    <h3 style="color:#195b98;font-size:14px;margin:22px 0 8px 0">Prochaines étapes</h3>
-    <ol style="padding-left:20px;font-size:13px;color:#5C5649">
-      <li>L'Administration Madavision examine votre dossier et valide l'éligibilité de votre activité</li>
-      <li>Vous recevrez un email de confirmation avec les instructions de règlement</li>
-      <li>Signature du contrat puis règlement de l'acompte (50 %)</li>
-      <li>Confirmation finale et préparation de votre stand</li>
-    </ol>
-
-    <p style="margin-top:24px;font-size:13px">Pour toute question, répondez à cet email ou contactez directement votre commercial.</p>
-    <p style="margin-bottom:0;font-size:13px">Cordialement,<br><strong>L'Administration Madavision</strong></p>
-  </div>
-
-  <div style="text-align:center;padding:14px;color:#9B9183;font-size:11px">
-    Madavision · 2026<br>
-    Cet email a été envoyé automatiquement — vous pouvez y répondre directement.
-  </div>
-</body></html>`,
+        html: emailHtml,
         ...(EMAIL_CONFIG.bcc ? { bcc: EMAIL_CONFIG.bcc } : {}),
         ...(pdfBuffer ? { attachments: [{ filename: 'dossier-inscription.pdf', content: pdfBuffer, contentType: 'application/pdf' }] } : {}),
       }).then(() => console.log(`✓ Email confirmation envoyé à ${data.email}`))
@@ -2348,18 +2334,21 @@ app.get('/api/exposant/:token', async (req, res) => {
     const sf = socRecords[0]?.fields || {}
 
     // 3. Édition liée (via la commande)
-    const editionId = (cf['Édition'] || cf['Edition'] || [])[0]
+    const editionId = (cf['Édition'] || cf['Edition'] || cf['Societé'] || [])[0]
     let edition = null
     if (editionId) {
-      const edRes  = await fetch(`${ATBASE}/${encodeURIComponent('Éditions')}/${editionId}`, { headers: headers() })
-      const edData = await edRes.json()
-      if (edRes.ok) edition = {
-        id: edData.id,
-        nom:       edData.fields['Nom édition'] || edData.fields['Année'],
-        dateDebut: edData.fields['Date début'],
-        dateFin:   edData.fields['Date fin'],
-        lieu:      edData.fields['Lieu'],
-        salonId:   (edData.fields['Salon'] || edData.fields['Salons'] || edData.fields['Salon lié'] || edData.fields['ID Salon'] || [])[0] || null,
+      const edRes  = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${editionId}`, { headers: headers() })
+      if (edRes.ok) {
+        const edData = await edRes.json()
+        const ef = edData.fields || {}
+        edition = {
+          id: edData.id,
+          nom:       ef['Edition'] || ef['Nom du salon'] || edData.id,
+          dateDebut: ef['Date début'] || ef['Date de début'] || '',
+          dateFin:   ef['Date fin'] || ef['Date de fin'] || '',
+          lieu:      ef['Lieu'] || ef['Ville'] || '',
+          salonId:   edData.id,
+        }
       }
     }
 
@@ -2606,27 +2595,19 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
     const sf = soc.fields
 
     // 3. Récupérer l'édition liée
-    const editionId = (cf['Édition'] || cf['Edition'] || [])[0]
+    const editionId = (cf['Édition'] || cf['Edition'] || cf['Societé'] || [])[0]
     let edition = null
     let evenement = null
     if (editionId) {
-      const edRes = await fetch(`${ATBASE}/${encodeURIComponent('Éditions')}/${editionId}`, { headers: headers() })
+      const edRes = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${editionId}`, { headers: headers() })
       if (edRes.ok) {
         const edData = await edRes.json()
         const ef = edData.fields || {}
-        const salonId = (ef['Salon'] || ef['Salons'] || ef['Salon lié'] || ef['ID Salon'] || [])[0]
-        edition = { id: edData.id, ...ef }
-        if (salonId) {
-          const salonRes = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${salonId}`, { headers: headers() })
-          if (salonRes.ok) {
-            const salonData = await salonRes.json()
-            const sf = salonData.fields || {}
-            evenement = {
-              id: salonData.id,
-              nom: sf['Nom du salon'] || sf['Nom'] || sf['Name'] || sf['ID Salon'] || salonData.id,
-              lieu: sf['Lieu'] || sf['Ville'] || '',
-            }
-          }
+        edition = { id: edData.id, nom: ef['Edition'] || ef['Édition'] || ef['Nom du salon'] }
+        evenement = {
+          id: edData.id,
+          nom: ef['Nom du salon'] || ef['Nom'] || ef['Name'] || ef['ID Salon'] || edData.id,
+          lieu: ef['Lieu'] || ef['Ville'] || '',
         }
       }
     }
@@ -2698,6 +2679,41 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
     if (commercialId) {
       commercial = (await atGet('Commerciaux', `RECORD_ID()="${commercialId}"`))[0]?.fields || null
     }
+
+    // 6. Recalcul financier de sécurité (Urgent: évite les erreurs de rollups Airtable)
+    const totalHTStands = stands.reduce((sum, s) => sum + (Number(s.prix) || 0), 0)
+    const totalHTActs = optionalActivities.reduce((sum, a) => sum + (Number(a.prix) || 0), 0)
+    const totalHT = totalHTStands + totalHTActs // Changer en Total TTC
+    const rawTaxRate = sf['Régime fiscal'] || sf['Regime fiscal'] || '0.2'
+    const taxRate = String(rawTaxRate).includes('20') ? 0.2 
+                  : String(rawTaxRate).includes('8') ? 0.08 
+                  : parseFloat(rawTaxRate) || 0
+    const montantTaxe = Math.round(totalHT * taxRate)
+    const ttcBase = totalHT + montantTaxe
+    const remisePromo = cf['Montant remise promo'] || 0
+    const voucherAmount = cf['Montant voucher appliqué'] || 0
+    const netAPayer = Math.max(0, ttcBase - remisePromo - voucherAmount)
+
+    // 6b. Récupérer les paiements associés
+    const paiements = []
+    const pIds = cf['Paiements'] || []
+    const parseMGA_local = v => parseFloat(String(v||0).replace(/[^0-9.,]/g,'').replace(',','.')) || 0
+    for (const pid of pIds) {
+      const pRes = await fetch(`${ATBASE}/${encodeURIComponent('Paiements')}/${pid}`, { headers: headers() })
+      if (pRes.ok) {
+        const pd = (await pRes.json()).fields || {}
+        paiements.push({
+          id: pid,
+          montant: parseMGA_local(pd['Montant payé'] || pd['Montant']),
+          mode:    pd['Mode de paiement'] || pd['Mode paiement'] || '—',
+          date:    pd['Date paiement'] || pd['Date'] || '',
+          reference: pd['Référence'] || '',
+          valide:  pd['Validé par M. Hery'] === true || (pd['Statut'] || '') === 'Validé',
+          notes:   pd['Notes'] || '',
+        })
+      }
+    }
+
     res.json({
       commande: {
         id: cmd.id,
@@ -2705,13 +2721,13 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
         dateCommande: cf['Date commande'],
         statutCommande: cf['Statut commande'],
         validation: cf['Validation'],
-        montantTotal: cf['Total TTC'] || cf['Net a payer'] || 0,
-        montantHT: cf['Montant HT'] || cf['Total HT'] || 0,
-        montantTaxe: cf['Montant taxe'] || 0,
+        montantTotal: netAPayer,
+        montantHT: totalHT,
+        montantTaxe: montantTaxe,
         pourcentageTaxe: cf['Pourcentage Taxe'] || '',
         tauxTva: cf['Pourcentage Taxe'] || sf['Régime fiscal'] || '',
         montantEncaisse: cf['Montant encaissé'] || 0,
-        resteAPayer: cf['Reste à payer'] || 0,
+        resteAPayer: Math.max(0, netAPayer - (cf['Montant encaissé'] || 0)), // Utilise le netAPayer calculé
         remisePromo: cf['Montant remise promo'] || 0,
         voucherAmount: cf['Montant voucher appliqué'] || 0,
         dateValidation: cf['Date validation'],
@@ -2729,6 +2745,7 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
       stands: stands,
       optionalActivities: optionalActivities,
       supplements,
+      paiements,
       bilan: bilan,
       commercial: commercial,
     })
@@ -3190,7 +3207,7 @@ async function requireExposantTokenAccess(req, res, next) {
     const socEmail = normalizeEmail(socData?.fields?.['Email'])
     if (!socEmail || socEmail !== auth.email) {
       return res.status(403).json({ error: 'Ce dossier n’est pas rattaché à votre compte.' })
-    }
+    }montantTaxe
 
     req.auth = auth
     req.exposantEmail = auth.email
@@ -3360,12 +3377,18 @@ app.post('/api/exposant/:token/update', async (req, res) => {
     const socId = (cf['Societé'] || cf['Société'] || [])[0]
     if (!socId) return res.status(404).json({ error: 'Société introuvable' })
 
+    // ── NOUVEAU : Traitement du logo via Cloudinary ──
+    data.logoUrl = await handleImageUpload(data.logoUrl || data.logoSocieteUrl || data.logoParticipation || data.logo)
+
     // Champs modifiables par l'exposant (infos de contact uniquement)
     const socFields = {}
     if (data.telephone)       socFields['Téléphone']        = data.telephone
     if (data.adresse)         socFields['Adresse']          = data.adresse
     if (data.contact)         socFields['Contact principal'] = data.contact
     if (data.fonction)        socFields['Fonction contact']  = data.fonction
+    if (data.logoUrl) {
+      socFields['Logo'] = [{ url: data.logoUrl }]
+    }
 
     if (Object.keys(socFields).length > 0) {
       await fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, {
@@ -3460,53 +3483,89 @@ app.post('/api/exposant/:token/paiement', async (req, res) => {
       'Commande':          [cmdId],
       'Montant payé':      montant,
       'Mode de paiement':  data.modePaiement,
-      'Date paiement':     new Date().toISOString().slice(0, 10),
+      'Date paiement':     data.date || new Date().toISOString().slice(0, 10),
     }
     const detailParts = []
     if (data.reference)  { paiementFields['Référence'] = data.reference;  detailParts.push(`Réf: ${data.reference}`) }
     if (data.banque)     detailParts.push(`Banque: ${data.banque}`)
-    if (data.operateur)  detailParts.push(`Opérateur: ${data.operateur}`)
+    if (data.operateur)  { paiementFields['Operateur mobile'] = data.operateur; detailParts.push(`Opérateur: ${data.operateur}`) }
     if (data.numero)     detailParts.push(`N°: ${data.numero}`)
+    if (data.nomSurCheque) { paiementFields['Nom sur chèque'] = data.nomSurCheque; detailParts.push(`Nom chèque: ${data.nomSurCheque}`) }
     if (detailParts.length) paiementFields['Notes'] = detailParts.join(' — ')
 
     const paiement = await atPost('Paiements', paiementFields)
 
-    // Obtenir infos société pour email
-    let socNom = '—'; let socEmail = null
+    // ── 1. Récupérer infos société et commercial pour les notifications ──
+    let socNom = '—'; 
+    let socEmail = null;
+    let commEmail = null;
     const socId = (cf['Societé'] || cf['Société'] || [])[0]
+
     if (socId) {
       try {
-        const s = await fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, { headers: headers() })
-        if (s.ok) { const sf = (await s.json()).fields || {}; socNom = sf['Raison sociale'] || '—'; socEmail = sf['Email'] || null }
-      } catch {}
+        const socRes = await fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, { headers: headers() })
+        if (socRes.ok) { 
+          const sf = (await socRes.json()).fields || {}
+          socNom = sf['Raison sociale'] || '—'
+          socEmail = sf['Email'] || null
+          
+          const commIds = sf['Commerciaux'] || []
+          if (commIds.length > 0) {
+            const commRes = await fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commIds[0]}`, { headers: headers() })
+            if (commRes.ok) {
+              const cf_comm = (await commRes.json()).fields || {}
+              commEmail = cf_comm['Email'] || cf_comm['Email professionnel'] || cf_comm['Mail'] || null
+            }
+          }
+        }
+      } catch (e) { console.warn('[paiement] Fetch soc/comm failed:', e.message) }
     }
 
-    // Email à l'admin
+    // ── 2. Envoi des emails ──
     if (mailTransporter) {
-      const taxLabels = { '0.2': 'TVA 20 %', '0.08': 'Taxe 8 %', '0': 'Taxe 3ème taux' }
-      mailTransporter.sendMail({
-        from:    `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
-        to:      EMAIL_CONFIG.fromAddress,
-        subject: `Déclaration paiement — ${socNom}`,
-        html: `<p>L'exposant <strong>${escapeHtml(socNom)}</strong> a déclaré un paiement de <strong>${montant.toLocaleString('fr-FR')} Ar</strong> (${escapeHtml(data.modePaiement)}).
-               <br>Référence : ${escapeHtml(data.reference||'—')} ${data.banque ? `— Banque : ${escapeHtml(data.banque)}` : ''}</p>
-               <p>À valider dans Airtable → table <strong>Paiements</strong>.</p>`,
-      }).catch(e => console.warn('[paiement] email admin:', e.message))
+      // A. Template pour l'Administration et le Commercial
+      const adminHtml = emailWrapper(`
+        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Nouvelle déclaration de paiement</h2>
+        <p>L'exposant <strong>${escapeHtml(socNom)}</strong> a déclaré un règlement :</p>
+        <div style="background:#F5F7FA;border-left:4px solid #195b98;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+          <div style="font-size:13px;color:#687e7e;margin-bottom:4px">Montant déclaré</div>
+          <div style="font-size:20px;font-weight:700;color:#195b98;font-family:monospace">${fmtMoney(montant)}</div>
+          <div style="margin-top:12px;font-size:13px;color:#0d0d0d;line-height:1.6">
+            <strong>Mode :</strong> ${escapeHtml(data.modePaiement)}<br/>
+            <strong>Référence :</strong> ${escapeHtml(data.reference || '—')}<br/>
+            ${data.banque ? `<strong>Banque :</strong> ${escapeHtml(data.banque)}<br/>` : ''}
+            ${data.operateur ? `<strong>Opérateur :</strong> ${escapeHtml(data.operateur)}` : ''}
+          </div>
+        </div>
+        <p style="font-size:13px;color:#687e7e">Action : Vérifier et valider le paiement dans Airtable → table <strong>Paiements</strong>.</p>
+      `)
 
-      // Confirmation exposant
+      // Envoi à l'Admin
+      mailer(EMAIL_CONFIG.fromAddress, `Déclaration paiement — ${socNom}`, adminHtml).catch(() => {})
+      
+      // Envoi au Commercial si assigné
+      if (commEmail) {
+        mailer(commEmail, `[Suivi] Paiement déclaré par ${socNom}`, adminHtml).catch(() => {})
+      }
+
+      // B. Template pour l'Exposant
+      const exhibHtml = emailWrapper(`
+        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Déclaration de paiement reçue</h2>
+        <p>Bonjour,</p>
+        <p>Nous avons bien enregistré votre déclaration de paiement de <strong>${fmtMoney(montant)}</strong>.</p>
+        <div style="background:#E8F7EF;border-left:4px solid #1E7F54;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+          <p style="margin:0;font-size:13px;color:#165f3e;line-height:1.5">
+            Notre équipe administrative va procéder à la vérification de la transaction. 
+            Le statut de votre règlement sera mis à jour dans votre espace exposant sous <strong>24–48h ouvrables</strong>.
+          </p>
+        </div>
+        <p style="font-size:13px;color:#687e7e">Merci de votre confiance.</p>
+        <p style="font-size:13px;margin-top:20px">Cordialement,<br/><strong>L'Administration Madavision</strong></p>
+      `)
+
       const toEmail = data.emailExposant || socEmail
       if (toEmail) {
-        mailTransporter.sendMail({
-          from:    `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
-          to:      toEmail,
-          subject: `Déclaration paiement reçue — ${socNom}`,
-          html: `<div style="font-family:Arial,sans-serif;max-width:500px;margin:auto;padding:20px">
-            <h2 style="color:#0A7070">Déclaration de paiement reçue</h2>
-            <p>Nous avons bien enregistré votre déclaration de paiement de <strong>${montant.toLocaleString('fr-FR')} Ar</strong>.</p>
-            <p>Notre équipe validera le paiement dans les 24–48h ouvrables.</p>
-            <p>Cordialement,<br><strong>L'Administration Madavision</strong></p>
-          </div>`,
-        }).catch(() => {})
+        mailer(toEmail, `Confirmation réception paiement — Madavision`, exhibHtml).catch(() => {})
       }
     }
 
@@ -3687,121 +3746,405 @@ app.get('/api/exposant/:token/download-dossier', async (req, res) => {
 })
 
 
-app.post('/api/send-dossier', async (req, res) => {
-  try {
-    // Vérifier que l'email est configuré
-    if (!EMAIL_ENABLED || !mailTransporter) {
-      return res.status(503).json({
-        error: 'L\'envoi d\'email n\'est pas configuré sur le serveur'
-      })
-    }
+// app.post('/api/send-dossier', async (req, res) => {
+//   try {
+//     // Vérifier que l'email est configuré
+//     if (!EMAIL_ENABLED || !mailTransporter) {
+//       return res.status(503).json({
+//         error: 'L\'envoi d\'email n\'est pas configuré sur le serveur'
+//       })
+//     }
 
-    const { email, nomSociete, numDossier, htmlDossier, dashboardUrl } = req.body || {}
+//     // const { email, nomSociete, numDossier, htmlDossier, dashboardUrl } = req.body || {}
 
-    // Validation
-    if (!email || !email.includes('@')) {
-      return res.status(400).json({ error: 'Email invalide' })
-    }
-    if (!htmlDossier) {
-      return res.status(400).json({ error: 'Contenu du dossier manquant' })
-    }
-    if (!nomSociete) {
-      return res.status(400).json({ error: 'Nom de société manquant' })
-    }
+//     const {
+//       email, nomSociete, numDossier, htmlDossier, dashboardUrl,
+//       // Infos société (pour l'entête email)
+//       nif, stat, adresse, telephone: telSoc, siteWeb, emailSociete,
+//       logoSocieteUrl,         // URL publique logo société (depuis Airtable)
+//       // Données financières (formules identiques Airtable)
+//       totalStands    = 0,    // Total TTC stands (champ Cumul Airtable)
+//       totalActivites = 0,    // Prix activités optionnelles
+//       remisePromo    = 0,    // Montant remise code promo
+//       montantVoucher = 0,    // Montant utilisé voucher
+//       regimeFiscal   = '',   // '0.2' | '0.08' | '0' ou texte
+//       stands         = [],   // [{label, prix}] détail des stands
+//       activites      = [],   // [{label, prix}] détail des activités
+//     } = req.body || {}
 
-    // Nom de fichier pour la pièce jointe
-    const safeName = String(nomSociete).replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 40)
-    const filename = `Dossier_${(numDossier || 'export').replace(/[^a-zA-Z0-9-_]/g,'_')}_${safeName}.html`
+//     // Validation
+//     if (!email || !email.includes('@')) {
+//       return res.status(400).json({ error: 'Email invalide' })
+//     }
+//     if (!htmlDossier) {
+//       return res.status(400).json({ error: 'Contenu du dossier manquant' })
+//     }
+//     if (!nomSociete) {
+//       return res.status(400).json({ error: 'Nom de société manquant' })
+//     }
 
-    // Email HTML — corps du message
-    const emailHtml = `
-<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/></head>
-<body style="font-family:Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
-  <div style="background:linear-gradient(135deg,#0A7070 0%,#085959 100%);color:#fff;padding:28px 24px;border-radius:10px 10px 0 0">
-    <div style="font-size:22px;font-weight:700;margin-bottom:4px">MADAVISION</div>
-    <div style="font-size:13px;opacity:.9">2026</div>
-  </div>
+//     // Nom de fichier pour la pièce jointe
+//     const safeName = String(nomSociete).replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 40)
+//     const filename = `Dossier_${(numDossier || 'export').replace(/[^a-zA-Z0-9-_]/g,'_')}_${safeName}.html`
 
-  <div style="background:#fff;border:1px solid #E8E3DA;border-top:none;padding:28px 24px;border-radius:0 0 10px 10px">
-    <h2 style="color:#0A7070;font-size:18px;margin:0 0 14px 0">Confirmation d'inscription</h2>
+//     // Email HTML — corps du message
+//     const emailHtml = `
+// <!DOCTYPE html>
+// <html><head><meta charset="UTF-8"/></head>
+// <body style="font-family:Arial,sans-serif;color:#1A1814;line-height:1.6;max-width:600px;margin:0 auto;padding:20px">
+//   <div style="background:linear-gradient(135deg,#0A7070 0%,#085959 100%);color:#fff;padding:28px 24px;border-radius:10px 10px 0 0">
+//     <div style="font-size:22px;font-weight:700;margin-bottom:4px">MADAVISION</div>
+//     <div style="font-size:13px;opacity:.9">2026</div>
+//   </div>
 
-    <p>Bonjour,</p>
+//   <div style="background:#fff;border:1px solid #E8E3DA;border-top:none;padding:28px 24px;border-radius:0 0 10px 10px">
+//     <h2 style="color:#0A7070;font-size:18px;margin:0 0 14px 0">Confirmation d'inscription</h2>
 
-    <p>Nous avons bien reçu l'inscription de <strong>${escapeHtml(nomSociete)}</strong> à la <strong>l'evenement de Madavision</strong>.</p>
+//     <p>Bonjour,</p>
 
-    <div style="background:#E6F4F4;border-left:3px solid #0A7070;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#0A7070;margin-bottom:6px">Numéro de dossier</div>
-      <div style="font-family:monospace;font-size:14px;font-weight:700;color:#085959">${escapeHtml(numDossier || '—')}</div>
-    </div>
+//     <p>Nous avons bien reçu l'inscription de <strong>${escapeHtml(nomSociete)}</strong> à la <strong>l'evenement de Madavision</strong>.</p>
 
-    <p>Vous trouverez en pièce jointe votre <strong>dossier d'inscription complet</strong> avec toutes les informations utiles (informations société, stand réservé, conditions de règlement).</p>
+//     <div style="background:#E6F4F4;border-left:3px solid #0A7070;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
+//       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#0A7070;margin-bottom:6px">Numéro de dossier</div>
+//       <div style="font-family:monospace;font-size:14px;font-weight:700;color:#085959">${escapeHtml(numDossier || '—')}</div>
+//     </div>
 
-    ${dashboardUrl ? `
-    <div style="background:#FEF3E8;border:1px solid #C87B2F;border-radius:8px;padding:16px 18px;margin:18px 0">
-      <div style="font-size:12px;font-weight:700;color:#C87B2F;margin-bottom:8px">🔑 Votre espace exposant personnel</div>
-      <div style="font-size:13px;margin-bottom:12px">Accédez à tout moment à votre dossier, suivez les paiements et téléchargez vos factures :</div>
-      <a href="${escapeHtml(dashboardUrl)}" style="background:#0A7070;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
-      <div style="font-size:11px;color:#9B9183;margin-top:10px;word-break:break-all">${escapeHtml(dashboardUrl)}</div>
-    </div>
-    ` : ''}
+//     <p>Vous trouverez en pièce jointe votre <strong>dossier d'inscription complet</strong> avec toutes les informations utiles (informations société, stand réservé, conditions de règlement).</p>
 
-    <h3 style="color:#0A7070;font-size:14px;margin:22px 0 8px 0">Prochaines étapes</h3>
-    <ol style="padding-left:20px;font-size:13px;color:#5C5649">
-      <li>L'Administration Madavision validera votre dossier et l'éligibilité de votre activité</li>
-      <li>Vous recevrez un email de confirmation avec les instructions de règlement</li>
-      <li>Signature du contrat (sous 7 jours) puis règlement de l'acompte</li>
-      <li>Confirmation finale et préparation de votre stand</li>
-    </ol>
+//     ${dashboardUrl ? `
+//     <div style="background:#FEF3E8;border:1px solid #C87B2F;border-radius:8px;padding:16px 18px;margin:18px 0">
+//       <div style="font-size:12px;font-weight:700;color:#C87B2F;margin-bottom:8px">🔑 Votre espace exposant personnel</div>
+//       <div style="font-size:13px;margin-bottom:12px">Accédez à tout moment à votre dossier, suivez les paiements et téléchargez vos factures :</div>
+//       <a href="${escapeHtml(dashboardUrl)}" style="background:#0A7070;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
+//       <div style="font-size:11px;color:#9B9183;margin-top:10px;word-break:break-all">${escapeHtml(dashboardUrl)}</div>
+//     </div>
+//     ` : ''}
 
-    <p style="margin-top:24px">Pour toute question, n'hésitez pas à répondre à cet email ou à contacter votre commercial dès qu'il vous sera assigné.</p>
+//     <h3 style="color:#0A7070;font-size:14px;margin:22px 0 8px 0">Prochaines étapes</h3>
+//     <ol style="padding-left:20px;font-size:13px;color:#5C5649">
+//       <li>L'Administration Madavision validera votre dossier et l'éligibilité de votre activité</li>
+//       <li>Vous recevrez un email de confirmation avec les instructions de règlement</li>
+//       <li>Signature du contrat (sous 7 jours) puis règlement de l'acompte</li>
+//       <li>Confirmation finale et préparation de votre stand</li>
+//     </ol>
 
-    <p style="margin-bottom:0">Cordialement,<br><strong>L'équipe Madavision</strong></p>
-  </div>
+//     <p style="margin-top:24px">Pour toute question, n'hésitez pas à répondre à cet email ou à contacter votre commercial dès qu'il vous sera assigné.</p>
 
-  <div style="text-align:center;padding:14px;color:#9B9183;font-size:11px">
-    Madavision · 2026<br>
-    Cet email a été envoyé automatiquement, vous pouvez y répondre directement.
-  </div>
-</body></html>`
+//     <p style="margin-bottom:0">Cordialement,<br><strong>L'équipe Madavision</strong></p>
+//   </div>
 
-    // Envoi
-    const mailOptions = {
-      from:    `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
-      to:      email,
-      subject: `Confirmation d'inscription — ${nomSociete}`,
-      html:    emailHtml,
-      attachments: [
-        {
-          filename,
-          content:     htmlDossier,
-          contentType: 'text/html; charset=utf-8',
-        },
-      ],
-    }
-    if (EMAIL_CONFIG.bcc) mailOptions.bcc = EMAIL_CONFIG.bcc
+//   <div style="text-align:center;padding:14px;color:#9B9183;font-size:11px">
+//     Madavision · 2026<br>
+//     Cet email a été envoyé automatiquement, vous pouvez y répondre directement.
+//   </div>
+// </body></html>`
 
-    const info = await mailTransporter.sendMail(mailOptions)
+//     // Envoi
+//     const mailOptions = {
+//       from:    `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
+//       to:      email,
+//       subject: `Confirmation d'inscription — ${nomSociete}`,
+//       html:    emailHtml,
+//       attachments: [
+//         {
+//           filename,
+//           content:     htmlDossier,
+//           contentType: 'text/html; charset=utf-8',
+//         },
+//       ],
+//     }
+//     if (EMAIL_CONFIG.bcc) mailOptions.bcc = EMAIL_CONFIG.bcc
 
-    res.json({
-      success: true,
-      messageId: info.messageId,
-      message: `Email envoyé à ${email}`,
-    })
+//     const info = await mailTransporter.sendMail(mailOptions)
 
-  } catch (e) {
-    console.error('[send-dossier] error:', e.message)
-    res.status(500).json({
-      error: DEBUG ? e.message : 'Impossible d\'envoyer l\'email. Veuillez réessayer.'
-    })
-  }
-})
+//     res.json({
+//       success: true,
+//       messageId: info.messageId,
+//       message: `Email envoyé à ${email}`,
+//     })
+
+//   } catch (e) {
+//     console.error('[send-dossier] error:', e.message)
+//     res.status(500).json({
+//       error: DEBUG ? e.message : 'Impossible d\'envoyer l\'email. Veuillez réessayer.'
+//     })
+//   }
+// })
 
 
 
 // ════════════════════════════════════════════════════════
 //  SONIA DASHBOARD — Authentification OTP + Validation
 // ════════════════════════════════════════════════════════
+
+app.post('/api/send-dossier', async (req, res) => {
+  try {
+    if (!EMAIL_ENABLED || !mailTransporter) {
+      return res.status(503).json({ error: "L'envoi d'email n'est pas configuré sur le serveur" })
+    }
+
+    const {
+      email, nomSociete, numDossier, htmlDossier, dashboardUrl,
+      // Infos société (pour l'entête email)
+      nif, stat, adresse, telephone: telSoc, siteWeb, emailSociete,
+      logoSocieteUrl,         // URL publique logo société (depuis Airtable)
+      // Données financières (formules identiques Airtable)
+      totalStands    = 0,    // Total TTC stands (champ Cumul Airtable)
+      totalActivites = 0,    // Prix activités optionnelles
+      remisePromo    = 0,    // Montant remise code promo
+      montantVoucher = 0,    // Montant utilisé voucher
+      regimeFiscal   = '',   // '0.2' | '0.08' | '0' ou texte
+      stands         = [],   // [{label, prix}] détail des stands
+      activites      = [],   // [{label, prix}] détail des activités
+    } = req.body || {}
+
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'Email invalide' })
+    if (!nomSociete)                    return res.status(400).json({ error: 'Nom de société manquant' })
+
+    // ─────────────────────────────────────────────────────────────────
+    //  CALCUL FISCAL — identique aux formules Airtable
+    //
+    //  Les prix stands/activités sont déjà TTC (taxe incluse)
+    //  La taxe s'extrait à rebours du TTC (pas ajout sur HT)
+    //
+    //  Montant TTC  = Total TTC stands + activités − remise promo
+    //  Montant HT   = Montant TTC ÷ (1 + taux)
+    //  Montant taxe = Montant HT × taux
+    //  Net à payer  = Montant TTC − montant voucher
+    // ─────────────────────────────────────────────────────────────────
+    const stands_TTC    = Number(totalStands)    || 0
+    const activ_TTC     = Number(totalActivites)  || 0
+    const remise        = Number(remisePromo)     || 0
+    const voucher       = Number(montantVoucher)  || 0
+
+    // Résoudre le taux depuis regimeFiscal
+    const regStr = String(regimeFiscal)
+    let taux = 0, tauxLabel = '', tauxPct = ''
+    if      (regStr === '0.2'  || regStr.includes('20')) { taux = 0.20; tauxLabel = 'TVA 20 %';             tauxPct = '20 %' }
+    else if (regStr === '0.08' || regStr.includes('8'))  { taux = 0.08; tauxLabel = 'Taxe 8 %';              tauxPct = '8 %'  }
+    else if (regStr === '0'    || regStr.includes('3'))  { taux = 0.03; tauxLabel = "Taxe 3ème taux (0 %)"; tauxPct = '0 %'  }
+
+    const montantTTC  = Math.max(0, stands_TTC + activ_TTC - remise)
+    const montantHT   = taux > 0 ? Math.round(montantTTC / (1 + taux)) : montantTTC
+    const montantTaxe = Math.round(montantHT * taux)
+    const netAPayer   = Math.max(0, montantTTC - voucher)
+    const acompte50   = Math.round(netAPayer * 0.5)
+
+    // Séparateurs milliers avec POINTS (comme demandé)
+    const fmtAr = n => Math.round(Number(n)||0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' Ar'
+
+    // Logo Madavision (URL depuis .env ou texte)
+    const mvLogoUrl = process.env.MADAVISION_LOGO_URL || ''
+    const logoMVHtml = mvLogoUrl
+      ? `<img src="${mvLogoUrl}" alt="Madavision" style="height:50px;display:block;margin-bottom:8px"/>`
+      : `<div style="font-size:24px;font-weight:900;color:#195b98;letter-spacing:-.02em;margin-bottom:8px">MADAVISION</div>`
+
+    // Logo société (droit du header)
+    const logoSocHtml = logoSocieteUrl
+      ? `<img src="${escapeHtml(logoSocieteUrl)}" alt="${escapeHtml(nomSociete)}" style="height:50px;display:block;margin-left:auto;margin-bottom:6px;object-fit:contain"/>`
+      : ''
+
+    // Lignes stands
+    const standsRows = stands.length > 0
+      ? stands.map(s => `
+        <tr>
+          <td style="padding:6px 12px;font-size:12px;color:#687e7e;border-bottom:1px solid #eef2f8">${escapeHtml(s.label||'—')}</td>
+          <td style="padding:6px 12px;text-align:right;font-family:monospace;font-size:12px;color:#0d0d0d;border-bottom:1px solid #eef2f8">${fmtAr(s.prix||0)}</td>
+        </tr>`).join('')
+      : stands_TTC > 0 ? `<tr><td style="padding:6px 12px;font-size:12px;color:#687e7e;border-bottom:1px solid #eef2f8">Stands réservés</td><td style="padding:6px 12px;text-align:right;font-family:monospace;font-size:12px;color:#0d0d0d;border-bottom:1px solid #eef2f8">${fmtAr(stands_TTC)}</td></tr>` : ''
+
+    // Lignes activités
+    const activRows = activites.length > 0
+      ? activites.map(a => `
+        <tr>
+          <td style="padding:6px 12px;font-size:12px;color:#687e7e;border-bottom:1px solid #eef2f8">${escapeHtml(a.label||'Activité optionnelle')}</td>
+          <td style="padding:6px 12px;text-align:right;font-family:monospace;font-size:12px;color:#0d0d0d;border-bottom:1px solid #eef2f8">${fmtAr(a.prix||0)}</td>
+        </tr>`).join('')
+      : activ_TTC > 0 ? `<tr><td style="padding:6px 12px;font-size:12px;color:#687e7e;border-bottom:1px solid #eef2f8">Activités optionnelles</td><td style="padding:6px 12px;text-align:right;font-family:monospace;font-size:12px;color:#0d0d0d;border-bottom:1px solid #eef2f8">${fmtAr(activ_TTC)}</td></tr>` : ''
+
+    // ─── EMAIL HTML ───────────────────────────────────────────────────
+    const emailHtml = `<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f0f2f5;font-family:Arial,Helvetica,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px;background:#f0f2f5">
+<tr><td>
+<table width="600" align="center" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
+
+<!-- ══ HEADER ══ -->
+<tr><td style="background:#195b98;padding:24px 28px;border-radius:10px 10px 0 0">
+  <table width="100%" cellpadding="0" cellspacing="0">
+  <tr>
+    <!-- Gauche: logo MV + infos -->
+    <td style="vertical-align:top;width:58%">
+      ${logoMVHtml}
+      <div style="font-size:10px;font-weight:700;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Foire Internationale de Madagascar 2026</div>
+      <table cellpadding="0" cellspacing="0" style="font-size:11px;color:rgba(255,255,255,.75);line-height:1.95">
+        ${process.env.MADAVISION_NIF     ? `<tr><td style="white-space:nowrap;padding-right:6px;color:rgba(255,255,255,.6)">NIF</td><td>${escapeHtml(process.env.MADAVISION_NIF)}</td></tr>` : ''}
+        ${process.env.MADAVISION_STAT    ? `<tr><td style="padding-right:6px;color:rgba(255,255,255,.6)">STAT</td><td>${escapeHtml(process.env.MADAVISION_STAT)}</td></tr>` : ''}
+        ${process.env.MADAVISION_ADRESSE ? `<tr><td style="padding-right:6px;color:rgba(255,255,255,.6)">Adresse</td><td>${escapeHtml(process.env.MADAVISION_ADRESSE)}</td></tr>` : ''}
+        <tr><td style="padding-right:6px;color:rgba(255,255,255,.6)">Tél.</td><td>${escapeHtml(process.env.MADAVISION_TEL||'+261 34 00 000 00')}</td></tr>
+        <tr><td style="padding-right:6px;color:rgba(255,255,255,.6)">Email</td><td>${escapeHtml(process.env.MADAVISION_EMAIL||'info@madavision.mg')}</td></tr>
+        <tr><td style="padding-right:6px;color:rgba(255,255,255,.6)">Site</td><td>${escapeHtml(process.env.MADAVISION_WEBSITE||'www.madavision.mg')}</td></tr>
+      </table>
+    </td>
+    <!-- Droite: logo société + nom -->
+    <td style="vertical-align:top;text-align:right;width:42%">
+      ${logoSocHtml}
+      <div style="font-size:15px;font-weight:700;color:#fff;margin-top:${logoSocHtml?'6':'0'}px">${escapeHtml(nomSociete)}</div>
+      ${numDossier ? `<div style="font-size:10px;color:rgba(255,255,255,.6);font-family:monospace;margin-top:4px">${escapeHtml(numDossier)}</div>` : ''}
+    </td>
+  </tr>
+  </table>
+</td></tr>
+
+<!-- ══ CORPS ══ -->
+<tr><td style="background:#fff;padding:28px;border:1px solid #dde3ee;border-top:none">
+
+  <h2 style="margin:0 0 4px;font-size:20px;color:#195b98;font-weight:700">Confirmation d'inscription</h2>
+  <p style="margin:0 0 20px;font-size:12px;color:#687e7e">Foire Internationale de Madagascar 2026</p>
+
+  <p style="font-size:14px;color:#0d0d0d;margin:0 0 10px">Bonjour,</p>
+  <p style="font-size:14px;color:#0d0d0d;margin:0 0 20px">
+    Nous avons bien reçu l'inscription de <strong>${escapeHtml(nomSociete)}</strong>
+    à la <strong>Foire Internationale de Madagascar 2026</strong>.
+  </p>
+
+  <!-- Numéro dossier -->
+  <div style="background:#eef2f8;border-left:4px solid #195b98;padding:14px 18px;border-radius:0 8px 8px 0;margin-bottom:24px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#687e7e;margin-bottom:5px">Numéro de dossier</div>
+    <div style="font-family:monospace;font-size:16px;font-weight:700;color:#195b98">${escapeHtml(numDossier||'—')}</div>
+  </div>
+
+  ${montantTTC > 0 ? `
+  <!-- ══ TABLEAU FINANCIER ══ -->
+  <!-- Logique: prix stands/activités = TTC inclus → taxe extraite à rebours -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dde3ee;border-radius:8px;overflow:hidden;margin-bottom:24px">
+    <tr><td colspan="2" style="background:#195b98;padding:10px 12px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#fff">
+      Récapitulatif financier
+    </td></tr>
+
+    <!-- Stands -->
+    ${standsRows}
+    <!-- Activités -->
+    ${activRows}
+
+    <!-- Remise promo -->
+    ${remise > 0 ? `<tr><td style="padding:6px 12px;font-size:12px;color:#1e7f54;border-bottom:1px solid #eef2f8">Remise code promo</td><td style="padding:6px 12px;text-align:right;font-family:monospace;font-size:12px;color:#1e7f54;border-bottom:1px solid #eef2f8">− ${fmtAr(remise)}</td></tr>` : ''}
+
+    <!-- Montant TTC (base fiscale) -->
+    <tr style="background:#f5f7fa">
+      <td style="padding:8px 12px;font-size:13px;font-weight:700;color:#0d0d0d;border-bottom:1px solid #dde3ee">Montant TTC</td>
+      <td style="padding:8px 12px;text-align:right;font-family:monospace;font-size:13px;font-weight:700;color:#0d0d0d;border-bottom:1px solid #dde3ee">${fmtAr(montantTTC)}</td>
+    </tr>
+
+    <!-- Détail fiscal (sur une ligne subtile) -->
+    ${taux > 0 ? `
+    <tr>
+      <td style="padding:4px 12px 4px 20px;font-size:11px;color:#687e7e;border-bottom:1px solid #eef2f8">dont HT (base)</td>
+      <td style="padding:4px 12px;text-align:right;font-family:monospace;font-size:11px;color:#687e7e;border-bottom:1px solid #eef2f8">${fmtAr(montantHT)}</td>
+    </tr>
+    <tr>
+      <td style="padding:4px 12px 8px 20px;font-size:11px;color:#687e7e;border-bottom:1px solid #dde3ee">dont ${tauxLabel}</td>
+      <td style="padding:4px 12px 8px;text-align:right;font-family:monospace;font-size:11px;color:#687e7e;border-bottom:1px solid #dde3ee">${fmtAr(montantTaxe)}</td>
+    </tr>` : ''}
+
+    <!-- Voucher -->
+    ${voucher > 0 ? `<tr><td style="padding:6px 12px;font-size:12px;color:#c87b2f;border-bottom:1px solid #eef2f8">Voucher utilisé</td><td style="padding:6px 12px;text-align:right;font-family:monospace;font-size:12px;color:#c87b2f;border-bottom:1px solid #eef2f8">− ${fmtAr(voucher)}</td></tr>` : ''}
+
+    <!-- NET À PAYER -->
+    <tr style="background:#195b98">
+      <td style="padding:13px 12px;font-size:14px;font-weight:700;color:#fff">NET À PAYER</td>
+      <td style="padding:13px 12px;text-align:right;font-family:monospace;font-size:17px;font-weight:700;color:#fff">${fmtAr(netAPayer)}</td>
+    </tr>
+  </table>
+
+  <!-- Calendrier paiements -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px">
+  <tr>
+    <td width="49%" style="background:#fff8ec;border:1px solid #f5c97a;border-radius:8px;padding:14px;text-align:center;vertical-align:top">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#687e7e;letter-spacing:.06em;margin-bottom:5px">Acompte 50 % — J+7</div>
+      <div style="font-family:monospace;font-size:20px;font-weight:700;color:#c87b2f">${fmtAr(acompte50)}</div>
+      <div style="font-size:10px;color:#687e7e;margin-top:4px">après validation du dossier</div>
+    </td>
+    <td width="2%"></td>
+    <td width="49%" style="background:#f5f7fa;border:1px solid #dde3ee;border-radius:8px;padding:14px;text-align:center;vertical-align:top">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#687e7e;letter-spacing:.06em;margin-bottom:5px">Solde 50 % — J+20</div>
+      <div style="font-family:monospace;font-size:20px;font-weight:700;color:#687e7e">${fmtAr(acompte50)}</div>
+      <div style="font-size:10px;color:#687e7e;margin-top:4px">après réception de l'acompte</div>
+    </td>
+  </tr>
+  </table>
+  ` : ''}
+
+  <p style="font-size:13px;color:#0d0d0d;margin:0 0 16px">
+    Vous trouverez en pièce jointe votre <strong>dossier d'inscription complet</strong>.
+  </p>
+
+  ${dashboardUrl ? `
+  <div style="background:#eef2f8;border:1px solid #b8cbe8;border-radius:8px;padding:16px 18px;margin-bottom:20px">
+    <div style="font-size:13px;font-weight:700;color:#195b98;margin-bottom:8px">🔑 Votre espace exposant</div>
+    <div style="font-size:12px;color:#687e7e;margin-bottom:12px">Suivez votre dossier et vos paiements en temps réel :</div>
+    <a href="${escapeHtml(dashboardUrl)}" style="background:#195b98;color:#fff;text-decoration:none;padding:10px 22px;border-radius:6px;display:inline-block;font-weight:700;font-size:13px">Accéder à mon espace →</a>
+  </div>` : ''}
+
+  <!-- Prochaines étapes -->
+  <div style="background:#f5f7fa;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <div style="font-size:11px;font-weight:700;color:#195b98;text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">Prochaines étapes</div>
+    <ol style="margin:0;padding-left:18px;font-size:12px;color:#0d0d0d;line-height:2.1">
+      <li>Validation du dossier par l'administration Madavision</li>
+      <li>Règlement de l'<strong>acompte 50 %</strong> sous <strong>7 jours</strong> après validation</li>
+      <li>Signature du contrat et confirmation du stand</li>
+      <li>Règlement du <strong>solde 50 %</strong> sous 20 jours après l'acompte</li>
+      <li>Remise des badges et invitations après solde complet</li>
+    </ol>
+  </div>
+
+  <!-- Avertissement -->
+  <div style="border-left:4px solid #c0392b;background:#fdecea;padding:12px 16px;border-radius:0 6px 6px 0;margin-bottom:20px">
+    <div style="font-size:12px;color:#c0392b;font-weight:700;margin-bottom:3px">⚠ Politique d'annulation</div>
+    <div style="font-size:11px;color:#0d0d0d;line-height:1.6">
+      L'acompte versé est <strong>intégralement conservé</strong> par Madavision en cas d'annulation.
+      Sans acompte sous 7 jours : annulation automatique.
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:#0d0d0d;margin:0 0 6px">
+    Pour toute question : <a href="mailto:${escapeHtml(process.env.MADAVISION_EMAIL||'info@madavision.mg')}" style="color:#195b98">${escapeHtml(process.env.MADAVISION_EMAIL||'info@madavision.mg')}</a>
+  </p>
+  <p style="font-size:13px;color:#0d0d0d;margin:0">Cordialement,<br><strong style="color:#195b98">L'équipe Madavision</strong></p>
+
+</td></tr>
+
+<!-- ══ FOOTER ══ -->
+<tr><td style="background:#195b98;padding:14px 28px;border-radius:0 0 10px 10px;text-align:center">
+  <div style="font-size:11px;color:rgba(255,255,255,.7)">Madavision — Foire Internationale de Madagascar 2026</div>
+  <div style="font-size:10px;color:rgba(255,255,255,.45);margin-top:3px">Cet email a été envoyé automatiquement — vous pouvez y répondre directement.</div>
+</td></tr>
+
+</table>
+</td></tr></table>
+</body></html>`
+
+    const safeName   = String(nomSociete).replace(/[^a-zA-Z0-9-_]/g,'_').slice(0,40)
+    const filename   = `Dossier_${(numDossier||'export').replace(/[^a-zA-Z0-9-_]/g,'_')}_${safeName}.html`
+    const mailOptions = {
+      from:        `"${EMAIL_CONFIG.fromName}" <${EMAIL_CONFIG.fromAddress}>`,
+      to:          email,
+      subject:     `[FIM 2026] Confirmation d'inscription — ${nomSociete}`,
+      html:        emailHtml,
+      attachments: htmlDossier ? [{ filename, content: htmlDossier, contentType: 'text/html; charset=utf-8' }] : [],
+    }
+    if (EMAIL_CONFIG.bcc) mailOptions.bcc = EMAIL_CONFIG.bcc
+
+    const info = await mailTransporter.sendMail(mailOptions)
+    console.log(`✓ [send-dossier] Email → ${email} | msgId: ${info.messageId}`)
+    res.json({ success: true, messageId: info.messageId, message: `Email envoyé à ${email}` })
+
+  } catch(e) {
+    console.error('[send-dossier]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : "Impossible d'envoyer l'email." })
+  }
+})
 
 const SONIA_EMAILS = (process.env.SONIA_EMAILS || process.env.SONIA_EMAIL || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
 const otpStoreSonia = {}  // { email: { code, expires } }
@@ -4082,32 +4425,15 @@ async function invoiceFetchRecord(table, id) {
 }
 
 async function resolveEditionAndSalon(editionId, directSalonId = null) {
-  let edition = null
-  let evenement = null
-  let salonId = directSalonId
+  // Puisque Édition == Salon, on fetch directement dans Salons
+  const idToFetch = editionId || directSalonId
+  const salonData = await invoiceFetchRecord('Salons', idToFetch)
+  const f = salonData?.fields || {}
 
-  if (editionId) {
-    const edData = await invoiceFetchRecord('Éditions', editionId)
-    const ef = edData?.fields || {}
-    if (edData) {
-      edition = { id: edData.id, ...ef }
-      salonId = salonId || linkedRecordId(ef['Salon'] || ef['Salons'] || ef['Salon lié'] || ef['ID Salon'])
-    }
+  return { 
+    edition: { id: idToFetch, nom: f['Edition'] || f['Nom du salon'] },
+    evenement: { id: idToFetch, nom: f['Nom du salon'], lieu: f['Lieu'] }
   }
-
-  if (salonId) {
-    const salonData = await invoiceFetchRecord('Salons', salonId)
-    const sfSalon = salonData?.fields || {}
-    if (salonData) {
-      evenement = {
-        id: salonData.id,
-        nom: sfSalon['Nom du salon'] || sfSalon['Nom'] || sfSalon['Name'] || sfSalon['ID Salon'] || salonData.id,
-        lieu: sfSalon['Lieu'] || sfSalon['Ville'] || '',
-      }
-    }
-  }
-
-  return { edition, evenement }
 }
 
 async function fetchFirstRecordFromTables(tableNames, id) {
@@ -4194,6 +4520,15 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
   const societeRecord = await invoiceFetchRecord('Sociétés', societeId)
   const sf = societeRecord?.fields || {}
 
+  // Calcul des échéances à partir de la date de commande (J+5 et J+20)
+  const dateCmdStr = cf['Date commande'] || new Date().toISOString().slice(0, 10)
+  const addDays = (baseDate, days) => {
+    const d = new Date(baseDate)
+    if (isNaN(d.getTime())) return baseDate
+    d.setDate(d.getDate() + days)
+    return d.toISOString().slice(0, 10)
+  }
+
   if (commercialId) {
     const commIds = invoiceLinkedIds(sf['Commerciaux'])
     if (!commIds.includes(commercialId)) {
@@ -4203,12 +4538,10 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
     }
   }
 
-  let editionId = invoiceLinkedIds(cf['Édition'] || cf['Edition'])[0]
-  let editionRecord = await invoiceFetchRecord('Éditions', editionId)
-  let ef = editionRecord?.fields || {}
-  let salonId = invoiceLinkedIds(ef['Salon'] || ef['Salons'] || ef['Salon lié'] || ef['ID Salon'])[0]
-  let salonRecord = await invoiceFetchRecord('Salons', salonId)
+  let editionId = invoiceLinkedIds(cf['Édition'] || cf['Edition'] || cf['Societé'])[0]
+  let salonRecord = await invoiceFetchRecord('Salons', editionId)
   let salonFields = salonRecord?.fields || {}
+  let ef = salonFields
 
   const lines = []
   let fallbackEditionId = null
@@ -4226,20 +4559,12 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
       amount,
     })
   }
-  if ((!editionRecord || !salonRecord) && (fallbackEditionId || fallbackSalonId)) {
-    editionId = editionId || fallbackEditionId
-    salonId = salonId || fallbackSalonId
-    const resolved = await resolveEditionAndSalon(editionRecord ? null : editionId, salonRecord ? null : salonId)
-    if (!editionRecord && resolved.edition) {
-      editionRecord = { id: resolved.edition.id, fields: resolved.edition }
-      ef = resolved.edition
-    }
-    if (!salonRecord && resolved.evenement) {
-      salonRecord = { id: resolved.evenement.id, fields: resolved.evenement }
-      salonFields = {
-        'Nom du salon': resolved.evenement.nom,
-        'Lieu': resolved.evenement.lieu,
-      }
+  if (!salonRecord && (fallbackEditionId || fallbackSalonId)) {
+    const targetId = fallbackEditionId || fallbackSalonId
+    salonRecord = await invoiceFetchRecord('Salons', targetId)
+    if (salonRecord) {
+      salonFields = salonRecord.fields || {}
+      ef = salonFields
     }
   }
 
@@ -4262,12 +4587,20 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
     if (clean) lines.push({ label: clean, description: 'Supplément', qty: 1, amount: 0 })
   })
 
-  const lineSubtotal = lines.reduce((sum, item) => sum + invoiceMoney(item.amount) * (Number(item.qty) || 1), 0)
-  const montantHT = invoicePickMoney(cf, ['Montant HT', 'Total HT', 'Total stands'], lineSubtotal)
+  // CALCUL DE SÉCURITÉ : Recalcul HT brut depuis les lignes réelles (Stands + Activités)
+  const montantHT = lines.reduce((sum, item) => sum + invoiceMoney(item.amount) * (Number(item.qty) || 1), 0)
+  
   const remisePromo = invoicePickMoney(cf, ['Montant remise promo', 'Remise promo', 'Remise accordée'], 0)
   const voucherAmount = invoicePickMoney(cf, ['Montant voucher appliqué', 'Voucher appliqué', 'Montant voucher'], 0)
-  const montantTaxe = invoicePickMoney(cf, ['Montant taxe'], 0)
-  const totalTTC = invoicePickMoney(cf, ['Total TTC', 'Montant TTC', 'Net a payer'], Math.max(0, montantHT - remisePromo - voucherAmount + montantTaxe))
+
+  const rawTax = sf['Régime fiscal'] || sf['Regime fiscal'] || '0.2'
+  const taxRate = String(rawTax).includes('20') ? 0.2 : String(rawTax).includes('8') ? 0.08 : parseFloat(rawTax) || 0
+  
+  // Formule Airtable : Taxe sur HT brut, Remises sur le TTC total
+  const montantTaxe = Math.round(montantHT * taxRate)
+  const totalTTCBase = montantHT + montantTaxe
+  const netAPayer = Math.max(0, totalTTCBase - remisePromo - voucherAmount)
+  const totalTTC = netAPayer // On utilise le Net comme montant TTC final
   const montantEncaisse = invoicePickMoney(cf, ['Montant encaissé', 'Montant soldé', 'Montant deja payer', 'Montant déjà payé'], 0)
   const resteAPayer = invoicePickMoney(cf, ['Reste à payer'], Math.max(0, totalTTC - montantEncaisse))
 
@@ -4292,6 +4625,7 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
       adresse: invoiceText(sf['Adresse']),
       email: invoiceText(sf['Email']),
       telephone: invoiceText(sf['Téléphone']),
+      logoUrl: sf['Logo']?.[0]?.url || '',
     },
     evenement: {
       nom: invoiceText(salonFields['Nom du salon'], salonFields['Nom'], salonFields['Name'], salonFields['ID Salon']),
@@ -4310,10 +4644,10 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
     },
     dates: {
       validation: invoiceText(cf['Date validation']),
-      acompte: invoiceText(cf['Date J+7'], cf['Acompte 50 %']),
-      solde: invoiceText(cf['Date 20J'], cf['Solde 50 %']),
+      acompte: addDays(dateCmdStr, 5),
+      solde: addDays(dateCmdStr, 20),
     },
-    statut: invoiceText(cf['Statut commande'], cf['Statut'], cf['Validation']),
+    statut: cf['Validation'] === 'Validé' ? 'Validé' : invoiceText(cf['Validation'], cf['Statut commande'], cf['Statut']),
     financial: {
       montantHT,
       remisePromo,
@@ -4330,7 +4664,9 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
   }
 }
 
-function generateInvoicePDF(data) {
+async function generateInvoicePDF(data) {
+  const logoExposantBuffer = await fetchImageBuffer(data.societe.logoUrl)
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 48, compress: true })
     const buffers = []
@@ -4338,6 +4674,7 @@ function generateInvoicePDF(data) {
     doc.on('end', () => resolve(Buffer.concat(buffers)))
     doc.on('error', reject)
 
+    registerFonts(doc)
     const NAVY = '#0d0d0d'
     const BLEU = '#195b98'
     const GRAY = '#687e7e'
@@ -4353,48 +4690,45 @@ function generateInvoicePDF(data) {
     function section(title) {
       ensure(34)
       doc.rect(48, y, W, 24).fill(LIGHT)
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text(title.toUpperCase(), 60, y + 8)
+      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(title.toUpperCase(), 60, y + 8)
       y += 34
     }
     function row(label, value, x = 60, width = 210) {
       if (value === null || value === undefined || value === '') return
       ensure(18)
-      doc.fillColor(GRAY).font('Helvetica').fontSize(8).text(label, x, y, { width })
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text(String(value), x + width, y - 1, { width: 547 - x - width, align: 'right' })
+      doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text(label, x, y, { width })
+      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(String(value), x + width, y, { width: 547 - x - width, align: 'right' })
       y += 16
     }
     function moneyRow(label, value, strong = false) {
       ensure(18)
-      doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
-      doc.fillColor(strong ? BLEU : NAVY).font('Helvetica-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
+      doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Poppins-Bold' : 'Poppins-Regular').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
+      doc.fillColor(strong ? BLEU : NAVY).font('Poppins-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
       y += strong ? 18 : 15
     }
 
-    doc.rect(48, y, W, 90).fill(BLEU)
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(19).text('MADAVISION', 64, y + 14)
-    doc.font('Helvetica').fontSize(9).text('Facture exposant', 64, y + 38)
-    doc.font('Helvetica').fontSize(8).fillColor('#E6F4F4')
+    doc.rect(48, y, W, 100).fill(BLEU)
+    doc.fillColor('#fff').font('Poppins-Bold').fontSize(18).text('MADAVISION', 64, y + 15)
+    doc.font('Poppins-Regular').fontSize(9).text('Facture de vente', 64, y + 38)
+    doc.font('Poppins-Regular').fontSize(7.5).fillColor('#E6F4F4')
     const contactParts = []
-    if (data.societe?.nif) contactParts.push(`NIF : ${data.societe.nif}`)
-    if (data.societe?.stat) contactParts.push(`STAT : ${data.societe.stat}`)
-    if (data.societe?.telephone) contactParts.push(`Tel : ${data.societe.telephone}`)
-    if (data.societe?.email) contactParts.push(`Email : ${data.societe.email}`)
+    contactParts.push('NIF : 3000001053 • STAT : 92391 11 1993 0 00002')
+    contactParts.push('Adresse : Enceinte Gare Soarano, Analakely, Antananarivo')
+    contactParts.push('Tel : +261 20 22 235 44 • Email : contact@madavision.mg')
     contactParts.forEach((part, i) => {
-      doc.text(`• ${part}`, 64, y + 56 + i * 13)
+      doc.text(part, 64, y + 56 + i * 12)
     })
 
-    const logoMadPath = '/Users/mac/Desktop/my_project/MADAVISION/madavision-react/assets/logo/madavision-logo.png'
-    if (fs.existsSync(logoMadPath)) {
-      doc.image(logoMadPath, 64, y + 12, { width: 48 })
-    }
-
-    doc.fillColor('#fff').font('Helvetica-Bold').fontSize(14)
+    doc.fillColor('#fff').font('Poppins-Bold').fontSize(14)
       .text(data.societe?.nom || data.invoiceNumber, 350, y + 14, { width: 180, align: 'right' })
-    doc.font('Helvetica').fontSize(8)
+    doc.font('Poppins-Regular').fontSize(8)
       .text(`Émise le ${new Date(data.date).toLocaleDateString('fr-FR')}`, 350, y + 38, { width: 180, align: 'right' })
-    doc.font('Helvetica').fontSize(8).fillColor('#E6F4F4')
+    doc.font('Poppins-Bold').fontSize(8).fillColor('#E6F4F4')
       .text(data.invoiceNumber, 350, y + 56, { width: 180, align: 'right' })
-    y += 96
+    if (logoExposantBuffer) {
+      doc.image(logoExposantBuffer, 495, 85, { width: 40 })
+    }
+    y += 115
 
     section('Client')
     row('Société', data.societe.nom)
@@ -4413,7 +4747,7 @@ function generateInvoicePDF(data) {
 
     section('Commandes & réservations')
     ensure(28)
-    doc.fillColor(GRAY).font('Helvetica-Bold').fontSize(8)
+    doc.fillColor(GRAY).font('Poppins-Bold').fontSize(8)
     doc.text('Désignation', 60, y, { width: 250 })
     doc.text('Qté', 326, y, { width: 35, align: 'right' })
     doc.text('PU', 375, y, { width: 75, align: 'right' })
@@ -4429,11 +4763,11 @@ function generateInvoicePDF(data) {
         const qty = Number(item.qty) || 1
         const total = invoiceMoney(item.amount) * qty
         ensure(34)
-        doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text(item.label || '—', 60, y, { width: 250 })
-        if (item.description) doc.fillColor(GRAY).font('Helvetica').fontSize(7).text(item.description, 60, y + 11, { width: 250 })
-        doc.fillColor(NAVY).font('Helvetica').fontSize(9).text(String(qty), 326, y, { width: 35, align: 'right' })
+        doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(item.label || '—', 60, y, { width: 250 })
+        if (item.description) doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7).text(item.description, 60, y + 11, { width: 250 })
+        doc.fillColor(NAVY).font('Poppins-Regular').fontSize(9).text(String(qty), 326, y, { width: 35, align: 'right' })
         doc.text(invoiceFormatMoney(item.amount), 375, y, { width: 75, align: 'right' })
-        doc.font('Helvetica-Bold').text(invoiceFormatMoney(total), 462, y, { width: 85, align: 'right' })
+        doc.font('Poppins-Bold').text(invoiceFormatMoney(total), 462, y, { width: 85, align: 'right' })
         y += item.description ? 28 : 20
       })
     }
@@ -4456,14 +4790,16 @@ function generateInvoicePDF(data) {
     y = Math.max(y + 18, 735)
     doc.moveTo(48, y).lineTo(547, y).strokeColor(BLEU).lineWidth(1).stroke()
     y += 10
-    doc.fillColor(GRAY).font('Helvetica').fontSize(7)
+    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7)
       .text('Facture générée automatiquement à partir des données Airtable Commandes, Stands, Éditions, Salons et Société.', 48, y, { width: W, align: 'center' })
 
     doc.end()
   })
 }
 
-function generateProformaContractPDF(data) {
+async function generateProformaContractPDF(data) {
+  const logoExposantBuffer = await fetchImageBuffer(data.societe.logoUrl)
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margin: 48, compress: true })
     const buffers = []
@@ -4471,6 +4807,7 @@ function generateProformaContractPDF(data) {
     doc.on('end', () => resolve(Buffer.concat(buffers)))
     doc.on('error', reject)
 
+    registerFonts(doc)
     const NAVY = '#0d0d0d'
     const BLEU = '#195b98'
     const GRAY = '#687e7e'
@@ -4485,50 +4822,58 @@ function generateProformaContractPDF(data) {
       y = 48
     }
     function header(title, subtitle) {
-      doc.rect(48, y, W, 72).fill(BLEU)
-      doc.fillColor('#fff').font('Helvetica-Bold').fontSize(18).text('MADAVISION', 64, y + 15)
-      doc.font('Helvetica').fontSize(9).text(title, 64, y + 40)
-      doc.font('Helvetica-Bold').fontSize(13).text(subtitle, 335, y + 17, { width: 195, align: 'right' })
-      doc.font('Helvetica').fontSize(8).text(`Émis le ${invoiceFormatDate(data.date)}`, 335, y + 42, { width: 195, align: 'right' })
-      y += 94
+      doc.rect(48, y, W, 90).fill(BLEU)
+      doc.fillColor('#fff').font('Poppins-Bold').fontSize(18).text('MADAVISION', 64, y + 15)
+      doc.font('Poppins-Regular').fontSize(8).fillColor('#E6F4F4')
+      doc.text('NIF : 3000001053 • STAT : 92391 11 1993 0 00002', 64, y + 40)
+      doc.text('Enceinte Gare Soarano, Analakely, Antananarivo', 64, y + 52)
+      doc.text('contact@madavision.mg • www.madavision.mg', 64, y + 64)
+      
+      doc.fillColor('#fff').font('Poppins-Bold').fontSize(12).text(title, 335, y + 17, { width: 195, align: 'right' })
+      doc.fontSize(10).text(subtitle, 335, y + 35, { width: 195, align: 'right' })
+      doc.font('Poppins-Regular').fontSize(8).text(`Émis le ${invoiceFormatDate(data.date)}`, 335, y + 55, { width: 195, align: 'right' })
+      if (logoExposantBuffer) {
+        doc.image(logoExposantBuffer, 490, 60, { width: 40 })
+      }
+      y += 105
     }
     function section(title) {
       ensure(34)
       doc.rect(48, y, W, 24).fill(LIGHT)
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text(title.toUpperCase(), 60, y + 8)
+      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(title.toUpperCase(), 60, y + 8)
       y += 34
     }
     function row(label, value, x = 60, labelWidth = 150) {
       if (value === null || value === undefined || value === '') return
       ensure(18)
-      doc.fillColor(GRAY).font('Helvetica').fontSize(8).text(label, x, y, { width: labelWidth })
-      doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text(String(value), x + labelWidth, y - 1, { width: 547 - x - labelWidth, align: 'right' })
+      doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text(label, x, y, { width: labelWidth })
+      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(String(value), x + labelWidth, y, { width: 547 - x - labelWidth, align: 'right' })
       y += 16
     }
     function moneyRow(label, value, strong = false) {
       ensure(18)
-      doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
-      doc.fillColor(strong ? BLEU : NAVY).font('Helvetica-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
+      doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Poppins-Bold' : 'Poppins-Regular').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
+      doc.fillColor(strong ? BLEU : NAVY).font('Poppins-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
       y += strong ? 18 : 15
     }
     function paragraph(text, options = {}) {
       ensure(options.height || 34)
-      doc.fillColor(options.color || NAVY).font(options.font || 'Helvetica').fontSize(options.size || 9)
+      doc.fillColor(options.color || NAVY).font(options.font || 'Poppins-Regular').fontSize(options.size || 9)
         .text(text, 60, y, { width: 475, lineGap: 3, align: options.align || 'left' })
       y = doc.y + (options.gap ?? 10)
     }
     function bullet(text) {
       ensure(32)
-      doc.fillColor(BLEU).font('Helvetica-Bold').fontSize(11).text('•', 62, y)
-      doc.fillColor(NAVY).font('Helvetica').fontSize(9).text(text, 78, y, { width: 455, lineGap: 3 })
+      doc.fillColor(BLEU).font('Poppins-Bold').fontSize(11).text('•', 62, y)
+      doc.fillColor(NAVY).font('Poppins-Regular').fontSize(9).text(text, 78, y, { width: 455, lineGap: 3 })
       y = doc.y + 8
     }
 
-    const proformaNumber = `PRO-${data.dossierNumber || data.invoiceNumber}`
+    const proformaNumber = `PROFORMA N° ${data.dossierNumber || data.invoiceNumber}`
     const acompte = Math.round(invoiceMoney(data.financial.totalTTC) * 0.5)
     const solde = Math.max(0, invoiceMoney(data.financial.totalTTC) - acompte)
 
-    header('Facture proforma & contrat exposant', proformaNumber)
+    header('FACTURE PROFORMA', proformaNumber)
 
     section('Client & dossier')
     row('Société', data.societe.nom)
@@ -4543,7 +4888,7 @@ function generateProformaContractPDF(data) {
 
     section('Commandes & réservations')
     ensure(28)
-    doc.fillColor(GRAY).font('Helvetica-Bold').fontSize(8)
+    doc.fillColor(GRAY).font('Poppins-Bold').fontSize(8)
     doc.text('Désignation', 60, y, { width: 250 })
     doc.text('Qté', 326, y, { width: 35, align: 'right' })
     doc.text('PU', 375, y, { width: 75, align: 'right' })
@@ -4559,11 +4904,11 @@ function generateProformaContractPDF(data) {
         const qty = Number(item.qty) || 1
         const total = invoiceMoney(item.amount) * qty
         ensure(34)
-        doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text(item.label || '—', 60, y, { width: 250 })
-        if (item.description) doc.fillColor(GRAY).font('Helvetica').fontSize(7).text(item.description, 60, y + 11, { width: 250 })
-        doc.fillColor(NAVY).font('Helvetica').fontSize(9).text(String(qty), 326, y, { width: 35, align: 'right' })
+        doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(item.label || '—', 60, y, { width: 250 })
+        if (item.description) doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7).text(item.description, 60, y + 11, { width: 250 })
+        doc.fillColor(NAVY).font('Poppins-Regular').fontSize(9).text(String(qty), 326, y, { width: 35, align: 'right' })
         doc.text(invoiceFormatMoney(item.amount), 375, y, { width: 75, align: 'right' })
-        doc.font('Helvetica-Bold').text(invoiceFormatMoney(total), 462, y, { width: 85, align: 'right' })
+        doc.font('Poppins-Bold').text(invoiceFormatMoney(total), 462, y, { width: 85, align: 'right' })
         y += item.description ? 28 : 20
       })
     }
@@ -4585,6 +4930,16 @@ function generateProformaContractPDF(data) {
     y += 4
     row('Acompte 50 %', `${invoiceFormatMoney(acompte)} — échéance ${invoiceFormatDate(data.dates.acompte)}`)
     row('Solde 50 %', `${invoiceFormatMoney(solde)} — échéance ${invoiceFormatDate(data.dates.solde)}`)
+
+    // --- RIB Madavision ---
+    y += 20
+    doc.rect(60, y, 475, 55).strokeColor(BORDER).lineWidth(0.5).stroke()
+    doc.fillColor(BLEU).font('Poppins-Bold').fontSize(8).text('MODALITÉS DE RÈGLEMENT (RIB)', 70, y + 10)
+    doc.fillColor(NAVY).font('Poppins-Regular').fontSize(7.5)
+      .text('Banque : BNI MADAGASCAR - Agence : ANALAKELY', 70, y + 25)
+      .text('Compte : 00005 01010 12345678901 23', 70, y + 37)
+    doc.text('Virement ou chèque à l\'ordre de MADAVISION', 300, y + 25, { width: 220, align: 'right' })
+    y += 70
 
     doc.addPage()
     y = 48
@@ -4611,16 +4966,16 @@ function generateProformaContractPDF(data) {
     const boxY = y
     doc.rect(60, boxY, 210, 92).strokeColor(BORDER).lineWidth(0.8).stroke()
     doc.rect(325, boxY, 210, 92).strokeColor(BORDER).lineWidth(0.8).stroke()
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text('Pour l’exposant', 72, boxY + 12)
-    doc.fillColor(GRAY).font('Helvetica').fontSize(8).text('Nom, date, signature et cachet', 72, boxY + 30)
-    doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(9).text('Pour Madavision', 337, boxY + 12)
-    doc.fillColor(GRAY).font('Helvetica').fontSize(8).text('Validation administrative', 337, boxY + 30)
+    doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text('Pour l’exposant', 72, boxY + 12)
+    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text('Nom, date, signature et cachet', 72, boxY + 30)
+    doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text('Pour Madavision', 337, boxY + 12)
+    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text('Validation administrative', 337, boxY + 30)
     doc.moveTo(72, boxY + 72).lineTo(258, boxY + 72).strokeColor(BORDER).lineWidth(0.5).stroke()
     doc.moveTo(337, boxY + 72).lineTo(523, boxY + 72).strokeColor(BORDER).lineWidth(0.5).stroke()
     y = boxY + 116
 
     doc.moveTo(48, 760).lineTo(547, 760).strokeColor(BLEU).lineWidth(1).stroke()
-    doc.fillColor(GRAY).font('Helvetica').fontSize(7)
+    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7)
       .text('Document généré automatiquement à partir des données Airtable Commandes, Stands, Éditions, Salons et Société.', 48, 772, { width: W, align: 'center' })
 
     doc.end()
@@ -4789,7 +5144,7 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
 
     const [records, paiementsResp] = await Promise.all([
       atGet('Commandes', `sort%5B0%5D%5Bfield%5D=${encodeURIComponent('Date commande')}&sort%5B0%5D%5Bdirection%5D=desc&maxRecords=200`),
-      fetch(`${ATBASE}/${encodeURIComponent('Paiements')}?maxRecords=500&sort%5B0%5D%5Bfield%5D=Date&sort%5B0%5D%5Bdirection%5D=desc`, { headers: headers() }).then(r => r.json()).catch(() => ({ records: [] })),
+      fetch(`${ATBASE}/${encodeURIComponent('Paiements')}?maxRecords=500&sort%5B0%5D%5Bfield%5D=Date+paiement&sort%5B0%5D%5Bdirection%5D=desc`, { headers: headers() }).then(r => r.json()).catch(() => ({ records: [] })),
     ])
 
     const filteredRecords = records.filter(r => {
@@ -4820,22 +5175,27 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
     })
 
     const standIds = new Set()
+    const activityIds = new Set()
+    const salonIds = new Set()
     const editionIds = new Set()
+    // const activityMap = {}
+    // const editionMap = {}
+
     filteredRecords.forEach(r => {
       const f = r.fields || {}
       ;(f['Stand ou service commandé'] || []).forEach(id => { if (id?.startsWith('rec')) standIds.add(id) })
-      ;(f['Édition'] || f['Edition'] || []).forEach(id => { if (id?.startsWith('rec')) editionIds.add(id) })
+      ;(f['Activités optionnelles'] || []).forEach(id => { if (id?.startsWith('rec')) activityIds.add(id) })
+      ;(f['Edition'] || f['Edition'] || []).forEach(id => { if (id?.startsWith('rec')) { editionIds.add(id); salonIds.add(id); } })
     })
 
     const standMap = {}
-    const salonIds = new Set()
     if (standIds.size > 0) {
       const ids = [...standIds]
       const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
       const stResp = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json()).catch(() => ({ records: [] }))
       ;(stResp.records || []).forEach(r => {
         const f = r.fields || {}
-        const editionId = linkedRecordId(f['Édition'] || f['Edition'])
+        const editionId = linkedRecordId(f['Edition'] || f['Edition'])
         const salonId = linkedRecordId(f['Editions'] || f['Éditions'] || f['Salon'] || f['Salons'])
         if (editionId) editionIds.add(editionId)
         if (salonId) salonIds.add(salonId)
@@ -4845,6 +5205,37 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
           salonId,
         }
       })
+    }
+
+    // ── Fetch Activités en batch ─────────────────────────────────────
+    // const activityMap = {}
+    if (activityIds.size > 0) {
+      try {
+        const ids = [...activityIds]
+        const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
+        const actResp = await fetch(`${ATBASE}/${encodeURIComponent('Activités optionnelles')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json())
+        ;(actResp.records || []).forEach(r => {
+          const f = r.fields
+          activityMap[r.id] = {
+            prix: parseFloat(String(f['Prix unitaire'] || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
+          }
+        })
+      } catch(e) { console.warn('[sonia] batch activities failed:', e.message) }
+    }
+
+    // ── Fetch Activités en batch ─────────────────────────────────────
+    if (activityIds.size > 0) {
+      try {
+        const ids = [...activityIds]
+        const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
+        const actResp = await fetch(`${ATBASE}/${encodeURIComponent('Activités optionnelles')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json())
+        ;(actResp.records || []).forEach(r => {
+          const f = r.fields
+          activityMap[r.id] = {
+            prix: parseFloat(String(f['Prix unitaire'] || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
+          }
+        })
+      } catch(e) { console.warn('[commercial] batch activities failed:', e.message) }
     }
 
     const editionMap = {}
@@ -4866,6 +5257,22 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
           salonId,
         }
       })
+    }
+
+    // ── Fetch Activités en batch ─────────────────────────────────────
+    // const activityMap = {}
+    if (activityIds.size > 0) {
+      try {
+        const ids = [...activityIds]
+        const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
+        const actResp = await fetch(`${ATBASE}/${encodeURIComponent('Activités optionnelles')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json())
+        ;(actResp.records || []).forEach(r => {
+          const f = r.fields
+          activityMap[r.id] = {
+            prix: parseFloat(String(f['Prix unitaire'] || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
+          }
+        })
+      } catch(e) { console.warn('[sonia] batch activities failed:', e.message) }
     }
 
     const salonMap = {}
@@ -4898,7 +5305,7 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
       const montantTotal = parseMGA(f['Total TTC'] || f['Net a payer'])
       const resteAPayer = parseMGA(f['Reste à payer'])
       const montantEncaisse = paiements.filter(p => p.valide).reduce((s, p) => s + p.montant, 0) || parseMGA(f['Montant encaissé'])
-      const commandEditionId = linkedRecordId(f['Édition'] || f['Edition'])
+      const commandEditionId = linkedRecordId(f['Edition'] || f['Edition'])
       const editionId = commandEditionId || fallbackStand?.editionId || null
       const edition = editionId ? editionMap[editionId] : null
       const salonId = edition?.salonId || fallbackStand?.salonId || null
@@ -4919,9 +5326,9 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
         evenementId: evenement?.id || null,
         evenement,
         societe,
-        commandes: [{ id: r.id, stand: standsLabel, montant: montantTotal, reste: resteAPayer, statut: f['Statut commande'] || '—' }],
+        commandes: [{ id: r.id, stand: standsLabel, montant: netAPayer, reste: resteAPayer, statut: f['Statut commande'] || '—' }],
         numDossier: f['Numero de dossier'] || f['ID Commande'] || r.id.slice(-8).toUpperCase(),
-        montantTotal,
+        montantTotal: netAPayer,
         resteAPayer,
         montantEncaisse,
         paiements,
@@ -5030,6 +5437,18 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
 
     const bilan = await fetchBilanPuissance(cmdId, cf)
 
+    // RECALCUL SÉCURITÉ DETAIL
+    const totalHTStands = stands.reduce((sum, s) => sum + (Number(s.prix) || 0), 0)
+    const totalHTActs = optionalActivities.reduce((sum, a) => sum + (Number(a.prix) || 0), 0)
+    const totalHT = totalHTStands + totalHTActs
+    const tr = sf['Régime fiscal'] || sf['Regime fiscal'] || '0.2'
+    const taxRate = String(tr).includes('20') ? 0.2 : String(tr).includes('8') ? 0.08 : parseFloat(tr) || 0
+    const montantTaxe = Math.round(totalHT * taxRate)
+    const ttcBase = totalHT + montantTaxe
+    const remise = cf['Montant remise promo'] || 0
+    const voucher = cf['Montant voucher appliqué'] || 0
+    const netAPayer = Math.max(0, ttcBase - remise - voucher)
+
     const commercial = await findCommercialByEmail(req.commercialEmail)
     res.json({
       commande: {
@@ -5038,13 +5457,13 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
         dateCommande: cf['Date commande'],
         statutCommande: cf['Statut commande'],
         validation: cf['Validation'],
-        montantTotal: cf['Total TTC'] || cf['Net a payer'] || 0,
-        montantHT: cf['Montant HT'] || cf['Total HT'] || 0,
-        montantTaxe: cf['Montant taxe'] || 0,
+        montantTotal: netAPayer,
+        montantHT: totalHT,
+        montantTaxe: montantTaxe,
         pourcentageTaxe: cf['Pourcentage Taxe'] || '',
         tauxTva: cf['Pourcentage Taxe'] || sf['Régime fiscal'] || '',
         montantEncaisse: cf['Montant encaissé'] || 0,
-        resteAPayer: cf['Reste à payer'] || 0,
+        resteAPayer: Math.max(0, netAPayer - (cf['Montant encaissé'] || 0)), // Utilise le netAPayer calculé
         remisePromo: cf['Montant remise promo'] || 0,
         voucherAmount: cf['Montant voucher appliqué'] || 0,
         dateValidation: cf['Date validation'],
@@ -5361,7 +5780,7 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
     const [cmdsResp, commsResp, paiementsResp] = await Promise.all([
       fetch(`${ATBASE}/${encodeURIComponent('Commandes')}?${qs}`, { headers: headers() }).then(r => r.json()),
       fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}`,      { headers: headers() }).then(r => r.json()),
-      fetch(`${ATBASE}/${encodeURIComponent('Paiements')}?maxRecords=500&sort%5B0%5D%5Bfield%5D=Date&sort%5B0%5D%5Bdirection%5D=desc`, { headers: headers() }).then(r => r.json()).catch(() => ({ records: [] })),
+      fetch(`${ATBASE}/${encodeURIComponent('Paiements')}?maxRecords=500&sort%5B0%5D%5Bfield%5D=Date+paiement&sort%5B0%5D%5Bdirection%5D=desc`, { headers: headers() }).then(r => r.json()).catch(() => ({ records: [] })),
     ])
 
     if (cmdsResp.error) {
@@ -5391,7 +5810,7 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
     console.log('[sonia/dossiers] Liste des commerciaux transformée:', commerciaux)
 
     // ── Map Paiements par commandeId ─────────────────────────────────
-    const parseMGA2 = v => parseFloat(String(v||0).replace(/[^0-9.,]/g,'').replace(',','.')) || 0
+    const parseMGA2 = v => parseFloat(String(v || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0
     const paiementsMap = {}
     ;(paiementsResp.records || []).forEach(r => {
       const f    = r.fields
@@ -5400,12 +5819,13 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
         if (!paiementsMap[cId]) paiementsMap[cId] = []
         paiementsMap[cId].push({
           id:      r.id,
-          montant: parseMGA2(f['Montant']),
-          mode:    f['Mode paiement'] || f['Mode'] || '—',
-          date:    f['Date'] || '',
+          montant: parseMGA2(f['Montant payé'] || f['Montant']),
+          mode:    f['Mode de paiement'] || f['Mode paiement'] || f['Mode'] || '—',
+          date:    f['Date paiement'] || f['Date'] || '',
+          reference: f['Référence'] || '',
           statut:  f['Statut'] || 'En attente',
           notes:   f['Notes'] || '',
-          valide:  (f['Statut'] || '') === 'Validé',
+          valide:  f['Validé par M. Hery'] === true || (f['Statut'] || '') === 'Validé',
         })
       })
     })
@@ -5413,7 +5833,11 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
     // ── Collecter IDs uniques pour résolution en batch ───────────────
     const societeIds = new Set()
     const standIds   = new Set()
+    const activityIds = new Set()
+    const salonIds   = new Set()
     const editionIds = new Set()
+    const activityMap = {}
+    const editionMap = {}
 
     records.forEach(r => {
       const f = r.fields
@@ -5427,7 +5851,11 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
 
       // Édition liée
       const edIds = f['Édition'] || f['Edition'] || []
-      if (Array.isArray(edIds)) edIds.forEach(id => { if (id && id.startsWith('rec')) editionIds.add(id) })
+      if (Array.isArray(edIds)) edIds.forEach(id => { 
+        if (id && id.startsWith('rec')) { editionIds.add(id); salonIds.add(id); } 
+      })
+      const actIds = f['Activités optionnelles'] || []
+      if (Array.isArray(actIds)) actIds.forEach(id => { if (id && id.startsWith('rec')) activityIds.add(id) })
     })
 
     // ── Fetch Sociétés en batch ───────────────────────────────────────
@@ -5458,7 +5886,7 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
 
     // ── Fetch Stands en batch (si IDs) ────────────────────────────────
     const standMap = {}
-    const salonIds = new Set()
+    // const salonIds = new Set()
     if (standIds.size > 0) {
       try {
         const ids  = [...standIds]
@@ -5473,11 +5901,9 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
           const f = r.fields || {}
           const editionId = linkedRecordId(f['Édition'] || f['Edition'])
           const salonId = linkedRecordId(f['Editions'] || f['Éditions'] || f['Salon'] || f['Salons'])
-          if (editionId) editionIds.add(editionId)
           if (salonId) salonIds.add(salonId)
           standMap[r.id] = {
             label: f['ID Stand'] || f['Spécificités'] || r.id,
-            editionId,
             salonId,
           }
         })
@@ -5485,53 +5911,21 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       } catch(e) { console.warn('[sonia] batch stands failed:', e.message) }
     }
 
-    // ── Fetch Éditions + Salons en batch ──────────────────────────────
-    const editionMap = {}
-    if (editionIds.size > 0) {
-      try {
-        const ids = [...editionIds]
-        const fmla = ids.length === 1
-          ? `RECORD_ID()="${ids[0]}"`
-          : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
-        const edResp = await fetch(
-          `${ATBASE}/${encodeURIComponent('Éditions')}?filterByFormula=${encodeURIComponent(fmla)}`,
-          { headers: headers() }
-        ).then(r => r.json())
-        ;(edResp.records || []).forEach(r => {
-          const f = r.fields
-          const linkedSalonIds = f['Salon'] || f['Salons'] || f['Salon lié'] || f['ID Salon'] || []
-          const salonId = Array.isArray(linkedSalonIds) ? linkedSalonIds[0] : linkedSalonIds
-          if (salonId && String(salonId).startsWith('rec')) salonIds.add(salonId)
-          editionMap[r.id] = {
-            id: r.id,
-            nom: f['Nom édition'] || (f['Année'] ? `Édition ${f['Année']}` : r.id),
-            annee: f['Année'] || '',
-            lieu: f['Lieu'] || '',
-            dateDebut: f['Date début'] || '',
-            dateFin: f['Date fin'] || '',
-            salonId: salonId || null,
-          }
-        })
-      } catch(e) { console.warn('[sonia] batch éditions failed:', e.message) }
-    }
-
+    // ── Fetch Salons en batch (contient Salons + Editions unifiés) ─────
     const salonMap = {}
     if (salonIds.size > 0) {
       try {
         const ids = [...salonIds]
-        const fmla = ids.length === 1
-          ? `RECORD_ID()="${ids[0]}"`
-          : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
-        const salonsResp = await fetch(
-          `${ATBASE}/${encodeURIComponent('Salons')}?filterByFormula=${encodeURIComponent(fmla)}`,
-          { headers: headers() }
-        ).then(r => r.json())
-        ;(salonsResp.records || []).forEach(r => {
+        const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
+        const sResp = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json())
+        ;(sResp.records || []).forEach(r => {
           const f = r.fields
-          salonMap[r.id] = {
+          salonMap[r.id] = { id: r.id, nom: f['Nom du salon'] || f['Nom'] || f['Name'] || r.id, lieu: f['Lieu'] || '' }
+          editionMap[r.id] = {
             id: r.id,
-            nom: f['Nom du salon'] || f['Nom'] || f['Name'] || f['ID Salon'] || r.id,
-            lieu: f['Lieu'] || f['Ville'] || '',
+            nom: f['Edition'] || f['Édition'] || f['Nom édition'] || f['Nom du salon'] || r.id,
+            dateDebut: f['Date début'] || f['Date de début'] || '',
+            dateFin:   f['Date fin'] || f['Date de fin'] || '',
           }
         })
       } catch(e) { console.warn('[sonia] batch salons failed:', e.message) }
@@ -5555,6 +5949,7 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
         email:     socResolved?.email     || getSingle('Email (from Societé)') || '',
         telephone: socResolved?.telephone || String(getSingle('Téléphone (à partir de Societé)') || ''),
         contact:   getSingle('Contact principal (à partir de Societé)'),
+          regimeFiscal: socResolved?.regimeFiscal || getSingle('Régime fiscal (à partir de Societé)') || '0.2',
       }
 
       // Commercial actuel (on le résout via la société batchée pour être plus fiable que le lookup texte)
@@ -5582,16 +5977,26 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       const fallbackStand = Array.isArray(stLinkedIds)
         ? stLinkedIds.map(id => standMap[id]).find(Boolean)
         : null
-      const editionId = (Array.isArray(edLinkedIds) && edLinkedIds[0]?.startsWith('rec') ? edLinkedIds[0] : null) || fallbackStand?.editionId || null
+      const editionId = (Array.isArray(edLinkedIds) && edLinkedIds[0]?.startsWith('rec') ? edLinkedIds[0] : null) || fallbackStand?.salonId || null
       const edition = editionId ? editionMap[editionId] : null
-      const salonId = edition?.salonId || fallbackStand?.salonId || null
+      const salonId = editionId || fallbackStand?.salonId || null
       const evenement = salonId ? salonMap[salonId] : null
 
-      const montantTotal  = parseMGA(f['Total TTC'] || f['Net a payer'])
-      const resteAPayer   = parseMGA(f['Reste à payer'])
+      // RECALCUL DYNAMIQUE (Urgent: bypass Airtable rollups incorrects dans la liste)
+      const totalHTStands = (Array.isArray(stLinkedIds) && stLinkedIds[0]?.startsWith('rec')) ? stLinkedIds.reduce((sum, id) => sum + (standMap[id]?.prix || 0), 0) : 0
+      const totalHTActs = (f['Activités optionnelles'] || []).reduce((sum, id) => sum + (activityMap[id]?.prix || 0), 0)
+      const totalHT = totalHTStands + totalHTActs
+
+      const tr = societe.regimeFiscal; 
+      const taxRate = String(tr).includes('20') ? 0.2 : String(tr).includes('8') ? 0.08 : parseFloat(tr) || 0
+      const ttcBase = Math.round(totalHT * (1 + taxRate))
+      const remise = parseMGA(f['Montant remise promo'])
+      const voucher = parseMGA(f['Montant voucher appliqué'])
+      const netAPayer = Math.max(0, ttcBase - remise - voucher)
+
       const paiements     = paiementsMap[r.id] || []
-      const montantEncaisse = paiements.filter(p => p.valide).reduce((s, p) => s + p.montant, 0)
-        || parseMGA(f['Montant encaissé'])
+      const montantEncaisse = paiements.filter(p => p.valide).reduce((s, p) => s + p.montant, 0) || parseMGA(f['Montant encaissé'])
+      const resteAPayer = Math.max(0, netAPayer - montantEncaisse)
 
       return {
         id:              r.id,
@@ -5612,13 +6017,13 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
           id:      r.id,
           stand:   standsLabel,
           standCount,
-          montant: montantTotal,
+          montant: netAPayer,
           reste:   resteAPayer,
           statut:  f['Statut commande']        || '—',
         }],
         standCount,
         numDossier:      f['Numero de dossier'] || f['ID Commande'] || r.id.slice(-8).toUpperCase(),
-        montantTotal,
+        montantTotal: netAPayer,
         resteAPayer,
         montantEncaisse,
         paiements,
