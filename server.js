@@ -2681,19 +2681,21 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
       commercial = (await atGet('Commerciaux', `RECORD_ID()="${commercialId}"`))[0]?.fields || null
     }
 
-    // 6. Recalcul financier de sécurité (Urgent: évite les erreurs de rollups Airtable)
+    // 6. Recalcul financier de sécurité (formules identiques à Airtable)
+    // Les prix stands/activités sont déjà TTC (taxe incluse)
+    // On extrait le HT à rebours pour calculer la taxe
     const totalHTStands = stands.reduce((sum, s) => sum + (Number(s.prix) || 0), 0)
     const totalHTActs = optionalActivities.reduce((sum, a) => sum + (Number(a.prix) || 0), 0)
-    const totalHT = totalHTStands + totalHTActs // Changer en Total TTC
+    const montantTTC = totalHTStands + totalHTActs
     const rawTaxRate = sf['Régime fiscal'] || sf['Regime fiscal'] || '0.2'
     const taxRate = String(rawTaxRate).includes('20') ? 0.2 
                   : String(rawTaxRate).includes('8') ? 0.08 
                   : parseFloat(rawTaxRate) || 0
-    const montantTaxe = Math.round(totalHT * taxRate)
-    const ttcBase = totalHT + montantTaxe
+    const montantHT = taxRate > 0 ? Math.round(montantTTC / (1 + taxRate)) : montantTTC
+    const montantTaxe = Math.round(montantHT * taxRate)
     const remisePromo = cf['Montant remise promo'] || 0
     const voucherAmount = cf['Montant voucher appliqué'] || 0
-    const netAPayer = Math.max(0, ttcBase - remisePromo - voucherAmount)
+    const netAPayer = Math.max(0, montantTTC - remisePromo - voucherAmount)
 
     // 6b. Récupérer les paiements associés
     const paiements = []
@@ -2723,7 +2725,7 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
         statutCommande: cf['Statut commande'],
         validation: cf['Validation'],
         montantTotal: netAPayer,
-        montantHT: totalHT,
+        montantHT: montantHT,
         montantTaxe: montantTaxe,
         pourcentageTaxe: cf['Pourcentage Taxe'] || '',
         tauxTva: cf['Pourcentage Taxe'] || sf['Régime fiscal'] || '',
@@ -5437,17 +5439,19 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
 
     const bilan = await fetchBilanPuissance(cmdId, cf)
 
-    // RECALCUL SÉCURITÉ DETAIL
+    // RECALCUL SÉCURITÉ DETAIL (formules identiques à Airtable)
+    // Les prix stands/activités sont déjà TTC (taxe incluse)
+    // On extrait le HT à rebours pour calculer la taxe
     const totalHTStands = stands.reduce((sum, s) => sum + (Number(s.prix) || 0), 0)
     const totalHTActs = optionalActivities.reduce((sum, a) => sum + (Number(a.prix) || 0), 0)
-    const totalHT = totalHTStands + totalHTActs
+    const montantTTC = totalHTStands + totalHTActs
     const tr = sf['Régime fiscal'] || sf['Regime fiscal'] || '0.2'
     const taxRate = String(tr).includes('20') ? 0.2 : String(tr).includes('8') ? 0.08 : parseFloat(tr) || 0
-    const montantTaxe = Math.round(totalHT * taxRate)
-    const ttcBase = totalHT + montantTaxe
+    const montantHT = taxRate > 0 ? Math.round(montantTTC / (1 + taxRate)) : montantTTC
+    const montantTaxe = Math.round(montantHT * taxRate)
     const remise = cf['Montant remise promo'] || 0
     const voucher = cf['Montant voucher appliqué'] || 0
-    const netAPayer = Math.max(0, ttcBase - remise - voucher)
+    const netAPayer = Math.max(0, montantTTC - remise - voucher)
 
     const commercial = await findCommercialByEmail(req.commercialEmail)
     res.json({
@@ -5877,7 +5881,8 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
             nom:       f['Raison sociale'] || f['Nom'] || f['Name'] || null,
             email:     f['Email'] || '',
             telephone: String(f['Téléphone'] || ''),
-            commIds:   f['Commerciaux'] || [],  // IDs commerciaux assignés
+            commIds:   f['Commerciaux'] || [],
+            regimeFiscal: f['Régime fiscal'] || f['Regime fiscal'] || '0.2',
           }
         })
         console.log(`[sonia/dossiers] ${Object.keys(societeMap).length} sociétés résolues`)
@@ -5904,6 +5909,7 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
           if (salonId) salonIds.add(salonId)
           standMap[r.id] = {
             label: f['ID Stand'] || f['Spécificités'] || r.id,
+            prix: parseFloat(String(f['Prix'] || f['Prix HT'] || f['Tarif'] || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
             salonId,
           }
         })
@@ -5929,6 +5935,22 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
           }
         })
       } catch(e) { console.warn('[sonia] batch salons failed:', e.message) }
+    }
+
+    // ── Fetch Activités optionnelles en batch ──────────────────────────
+    if (activityIds.size > 0) {
+      try {
+        const ids = [...activityIds]
+        const fmla = ids.length === 1 ? `RECORD_ID()="${ids[0]}"` : `OR(${ids.map(id => `RECORD_ID()="${id}"`).join(',')})`
+        const actResp = await fetch(`${ATBASE}/${encodeURIComponent('Activités optionnelles')}?filterByFormula=${encodeURIComponent(fmla)}`, { headers: headers() }).then(r => r.json())
+        ;(actResp.records || []).forEach(r => {
+          const f = r.fields
+          activityMap[r.id] = {
+            prix: parseFloat(String(f['Prix unitaire'] || f['Prix'] || 0).replace(/[^0-9.,]/g, '').replace(',', '.')) || 0,
+          }
+        })
+        console.log(`[sonia/dossiers] ${Object.keys(activityMap).length} activités résolues`)
+      } catch(e) { console.warn('[sonia] batch activities failed:', e.message) }
     }
 
     // ── Mapping final commandes ──────────────────────────────────────
@@ -5982,17 +6004,20 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       const salonId = editionId || fallbackStand?.salonId || null
       const evenement = salonId ? salonMap[salonId] : null
 
-      // RECALCUL DYNAMIQUE (Urgent: bypass Airtable rollups incorrects dans la liste)
+      // RECALCUL DYNAMIQUE (formules identiques à Airtable)
+      // Les prix stands/activités sont déjà TTC (taxe incluse)
+      // On extrait le HT à rebours pour calculer la taxe
       const totalHTStands = (Array.isArray(stLinkedIds) && stLinkedIds[0]?.startsWith('rec')) ? stLinkedIds.reduce((sum, id) => sum + (standMap[id]?.prix || 0), 0) : 0
       const totalHTActs = (f['Activités optionnelles'] || []).reduce((sum, id) => sum + (activityMap[id]?.prix || 0), 0)
-      const totalHT = totalHTStands + totalHTActs
+      const montantTTC = totalHTStands + totalHTActs
 
-      const tr = societe.regimeFiscal; 
+      const tr = societe.regimeFiscal
       const taxRate = String(tr).includes('20') ? 0.2 : String(tr).includes('8') ? 0.08 : parseFloat(tr) || 0
-      const ttcBase = Math.round(totalHT * (1 + taxRate))
+      const montantHT = taxRate > 0 ? Math.round(montantTTC / (1 + taxRate)) : montantTTC
+      const montantTaxe = Math.round(montantHT * taxRate)
       const remise = parseMGA(f['Montant remise promo'])
       const voucher = parseMGA(f['Montant voucher appliqué'])
-      const netAPayer = Math.max(0, ttcBase - remise - voucher)
+      const netAPayer = Math.max(0, montantTTC - remise - voucher)
 
       const paiements     = paiementsMap[r.id] || []
       const montantEncaisse = paiements.filter(p => p.valide).reduce((s, p) => s + p.montant, 0) || parseMGA(f['Montant encaissé'])
