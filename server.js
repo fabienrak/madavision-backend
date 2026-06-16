@@ -264,8 +264,9 @@ async function generateInscriptionPDF(data) {
     const totalHT = totalHTStands + totalHTActs + totalHTSupps
 
     const taxRate = parseFloat(data.regimeFiscal) || 0
-    const montantTaxe = totalHT * taxRate
-    const totalTTC = totalHT + montantTaxe
+    const montantTTC = totalHT
+    const montantHT  = taxRate > 0 ? Math.round(montantTTC / (1 + taxRate)) : montantTTC
+    const montantTaxe = Math.round(montantHT * taxRate)
 
     const taxLabels = { '0.2': 'TVA 20%', '0.08': 'Taxe 8%', '0': 'Exonéré (0%)' }
     const currentTaxLabel = taxLabels[data.regimeFiscal] || (taxRate > 0 ? `${taxRate * 100}%` : '—')
@@ -280,8 +281,8 @@ async function generateInscriptionPDF(data) {
     y += 8
     doc.rect(50, y, W, 30).fill(BLEU)
     doc.fillColor('#fff').font('Poppins-Bold').fontSize(12)
-      .text('MONTANT TOTAL TTC', 65, y + 9)
-    doc.text(fmtMoney(totalTTC), 400, y + 10, { width: 135, align: 'right' })
+       .text('MONTANT TOTAL (nets inclus)', 65, y + 9)
+    doc.text(fmtMoney(montantTTC), 400, y + 10, { width: 135, align: 'right' })
     y += 50
 
     // --- MODALITÉS DE RÈGLEMENT ---
@@ -3917,7 +3918,6 @@ app.post('/api/send-dossier', async (req, res) => {
     const remise        = Number(remisePromo)     || 0
     const voucher       = Number(montantVoucher)  || 0
 
-    // Résoudre le taux depuis regimeFiscal
     const regStr = String(regimeFiscal)
     let taux = 0, tauxLabel = '', tauxPct = ''
     if      (regStr === '0.2'  || regStr.includes('20')) { taux = 0.20; tauxLabel = 'TVA 20 %';             tauxPct = '20 %' }
