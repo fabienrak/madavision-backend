@@ -1334,7 +1334,7 @@ app.get('/api/bootstrap', async (req, res) => {
         const f = r.fields
 
         // Le champ 'Édition' dans Stands pointe maintenant vers la table Salons
-        const standSalonIds = f['Édition'] || f['Edition'] || f['Editions'] || f['Éditions'] || []
+        const standSalonIds = f['Edition'] || f['Edition'] || f['Editions'] || f['Éditions'] || []
         const salonIds = Array.isArray(standSalonIds) ? standSalonIds : [standSalonIds]
 
         return {
@@ -1411,7 +1411,7 @@ app.get('/api/bootstrap', async (req, res) => {
           specs:      r.fields['Dimension'] || '',
           tarif:      r.fields['Tarif référence'] || 0,
           statut,
-          editionIds: r.fields['Édition'] || [],
+          editionIds: r.fields['Edition'] || [],
           libre:      !statut || ['Libre', 'Disponible'].includes(statut),
         }
       })
@@ -1429,6 +1429,7 @@ app.get('/api/bootstrap', async (req, res) => {
         activitesGratuites: optionsOf('Participations', 'Activité gratuite choisie'),
         regimesFiscaux:     optionsOf('Sociétés', 'Régime fiscal'),
         typesEntite:        optionsOf('Sociétés', "Type d'entité"),
+        banques:            optionsOf('Paiements', 'Banque'),
       },
     })
 
@@ -2008,12 +2009,6 @@ app.post('/api/inscription', async (req, res) => {
       'Notes':           notes.join('\n'),
       'Activités optionnelles': data.activitesOptionnellesIds || [],
       "Token d'accès":   accessToken,
-    }
-    if (data.editionId) {
-      cmdFields['Édition'] = [data.editionId]
-    }
-    if (data.salonId) {
-      cmdFields['Salon'] = [data.salonId]
     }
     if (data.descriptionActivite) {
       cmdFields['Description activités'] = data.descriptionActivite
@@ -3216,8 +3211,8 @@ async function requireExposantTokenAccess(req, res, next) {
     const socData = socResp.ok ? await socResp.json() : null
     const socEmail = normalizeEmail(socData?.fields?.['Email'])
     if (!socEmail || socEmail !== auth.email) {
-      return res.status(403).json({ error: 'Ce dossier n’est pas rattaché à votre compte.' })
-    }montantTaxe
+      return res.status(403).json({ error: 'Ce dossier n\u2019est pas rattaché à votre compte.' })
+    }
 
     req.auth = auth
     req.exposantEmail = auth.email
@@ -3494,6 +3489,7 @@ app.post('/api/exposant/:token/paiement', async (req, res) => {
       'Montant payé':      montant,
       'Mode de paiement':  data.modePaiement,
       'Date paiement':     data.date || new Date().toISOString().slice(0, 10),
+      'Statut':            'En attente',
     }
     const detailParts = []
     if (data.reference)  { paiementFields['Référence'] = data.reference;  detailParts.push(`Réf: ${data.reference}`) }
@@ -3558,17 +3554,26 @@ app.post('/api/exposant/:token/paiement', async (req, res) => {
         mailer(commEmail, `[Suivi] Paiement déclaré par ${socNom}`, adminHtml).catch(() => {})
       }
 
-      // B. Template pour l'Exposant
+      // B. Template pour l'Exposant — Confirmation réception paiement
+      const numDossier = cf['Numero de dossier'] || cf['ID Commande'] || cmd.id.slice(-8).toUpperCase()
       const exhibHtml = emailWrapper(`
-        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Déclaration de paiement reçue</h2>
+        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Confirmation réception paiement</h2>
         <p>Bonjour,</p>
-        <p>Nous avons bien enregistré votre déclaration de paiement de <strong>${fmtMoney(montant)}</strong>.</p>
+        <p>Nous avons bien enregistré votre déclaration de paiement.</p>
         <div style="background:#E8F7EF;border-left:4px solid #1E7F54;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
-          <p style="margin:0;font-size:13px;color:#165f3e;line-height:1.5">
-            Notre équipe administrative va procéder à la vérification de la transaction. 
-            Le statut de votre règlement sera mis à jour dans votre espace exposant sous <strong>24–48h ouvrables</strong>.
-          </p>
+          <div style="font-size:20px;font-weight:700;color:#1E7F54;font-family:monospace">${fmtMoney(montant)}</div>
+          <div style="margin-top:12px;font-size:13px;color:#0d0d0d;line-height:1.6">
+            <strong>Dossier :</strong> ${escapeHtml(numDossier)}<br/>
+            <strong>Mode :</strong> ${escapeHtml(data.modePaiement)}<br/>
+            <strong>Date :</strong> ${escapeHtml(data.date || new Date().toISOString().slice(0,10))}<br/>
+            ${data.reference ? `<strong>Référence :</strong> ${escapeHtml(data.reference)}<br/>` : ''}
+            <strong>Statut :</strong> <span style="color:#b45309">En attente de validation</span>
+          </div>
         </div>
+        <p style="font-size:13px;color:#687e7e;line-height:1.5">
+          Notre équipe administrative va procéder à la vérification de la transaction.<br/>
+          Le statut de votre règlement sera mis à jour dans votre espace exposant sous <strong>24–48h ouvrables</strong>.
+        </p>
         <p style="font-size:13px;color:#687e7e">Merci de votre confiance.</p>
         <p style="font-size:13px;margin-top:20px">Cordialement,<br/><strong>L'Administration Madavision</strong></p>
       `)
@@ -5542,6 +5547,24 @@ app.post('/api/commercial/dossier/:id/email-invoice', requireCommercial, async (
     const socEmail = socData.fields?.['Email'] || ''
     const socNom = socData.fields?.['Raison sociale'] || socData.fields?.['Nom'] || 'votre société'
     const commNom = commData.fields?.['Nom'] || commData.fields?.['Nom complet'] || 'votre commercial'
+    const numDossier = cf['Numero de dossier'] || cf['ID Commande'] || id.slice(-8).toUpperCase()
+    const dateCommande = cf['Date commande'] || '—'
+
+    // Dernier paiement enregistré sur la commande
+    const pIds = cf['Paiements'] || []
+    const paiements = []
+    for (const pid of pIds) {
+      try {
+        const pRes = await fetch(`${ATBASE}/${encodeURIComponent('Paiements')}/${pid}`, { headers: headers() })
+        if (pRes.ok) {
+          const pd = (await pRes.json()).fields || {}
+          const m = Number(String(pd['Montant payé'] || pd['Montant'] || 0).replace(/[^0-9.,-]/g,'').replace(',','.')) || 0
+          if (m > 0) paiements.push({ montant: m, date: pd['Date paiement'] || pd['Date'] || '', mode: pd['Mode de paiement'] || '—', valide: pd['Validé par M. Hery'] === true })
+        }
+      } catch(e) { /* non bloquant */ }
+    }
+    paiements.sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    const lastPay = paiements[0]
 
     if (!socEmail) {
       return res.status(400).json({ error: 'Aucune adresse email pour le client' })
@@ -5551,16 +5574,26 @@ app.post('/api/commercial/dossier/:id/email-invoice', requireCommercial, async (
     const invoiceData = await buildInvoiceData(id, { commercialId: req.commercialId })
     const pdf = await generateInvoicePDF(invoiceData)
     const filename = `${invoiceSafeFilename(invoiceData.invoiceNumber)}.pdf`
+    const totalTTC = Number(String(invoiceData.financial?.totalTTC || invoiceData.financial?.netAPayer || 0).replace(/[^0-9.,-]/g,'').replace(',','.')) || 0
+    const encaisse = Number(String(invoiceData.financial?.montantEncaisse || 0).replace(/[^0-9.,-]/g,'').replace(',','.')) || 0
+    const reste = Math.max(0, totalTTC - encaisse)
 
     const result = await mailer(
       socEmail,
       `Facture Madavision — ${socNom}`,
       emailWrapper(`
-        <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Votre facture Madavision FIM 2026</h2>
+        <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Votre facture Madavision</h2>
         <p>Bonjour ${escapeHtml(socNom)},</p>
         <p>Veuillez trouver ci-joint la facture pour votre participation à l evenement.</p>
         <div style="background:#EEF2F8;border-radius:10px;padding:18px;margin:18px 0">
-          <div style="font-size:16px;font-weight:700;color:#1B2A4A">${Number(invoiceData.total).toLocaleString('fr-FR')} Ar TTC</div>
+          <div style="font-size:16px;font-weight:700;color:#1B2A4A">${totalTTC.toLocaleString('fr-FR')} Ar TTC</div>
+          ${encaisse > 0 ? `<div style="font-size:13px;color:#16a34a;margin-top:6px">Déjà encaissé : ${encaisse.toLocaleString('fr-FR')} Ar</div>` : ''}
+          ${reste > 0 ? `<div style="font-size:13px;color:#b45309;margin-top:4px">Reste à payer : ${reste.toLocaleString('fr-FR')} Ar</div>` : `<div style="font-size:13px;color:#16a34a;margin-top:4px">✓ Solde</div>`}
+        </div>
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;margin:14px 0;font-size:13px;color:#374151;line-height:1.7">
+          <div><strong>Dossier :</strong> ${escapeHtml(numDossier)}</div>
+          <div><strong>Date commande :</strong> ${escapeHtml(dateCommande)}</div>
+          ${lastPay ? `<div><strong>Dernier paiement :</strong> ${escapeHtml(lastPay.date || '—')} — ${escapeHtml(lastPay.montant.toLocaleString('fr-FR'))} Ar (${escapeHtml(lastPay.mode)})${lastPay.valide ? ' ✓ Validé' : ''}</div>` : '<div><strong>Aucun paiement enregistré</strong></div>'}
         </div>
         <p style="font-size:13px;color:#5C5649">Commercial assigné : <strong>${escapeHtml(commNom)}</strong></p>
         <p style="font-size:12px;color:#9B9183;margin-top:16px">PDF en pièce jointe.</p>
@@ -6168,23 +6201,24 @@ app.post('/api/sonia/dossier/:id/email-invoice', requireSonia, async (req, res) 
     const cmd = await cmdResp.json()
     const cf = cmd.fields || {}
     const societeId = linkedRecordId(cf['Societé'] || cf['Société'])
-
-    const [socData, cmdData] = await Promise.all([
-      societeId ? fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${societeId}`, { headers: headers() }).then(r => r.json()).catch(() => ({ fields: {} })) : Promise.resolve({ fields: {} }),
-      Promise.resolve(cmd),
-    ])
-
-    const socEmail = socData.fields?.['Email'] || ''
-    const socNom = socData.fields?.['Raison sociale'] || socData.fields?.['Nom'] || 'votre société'
-    const commercialId = linkedRecordId(cf['Commerciaux'] || cf['Commercial affecté'])
+    const commId = linkedRecordId(cf['Commerciaux'] || cf['Commercial affecté'])
+    const numDossier = cf['Numero de dossier'] || cf['ID Commande'] || id.slice(-8).toUpperCase()
+    const dateCommande = cf['Date commande'] || '—'
     let commNom = '—'
-    if (commercialId) {
-      const commResp = await fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commercialId}`, { headers: headers() })
+    if (commId) {
+      const commResp = await fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commId}`, { headers: headers() })
       if (commResp.ok) {
         const commData = await commResp.json()
         commNom = commData.fields?.['Nom'] || commData.fields?.['Nom complet'] || '—'
       }
     }
+
+    const [socData] = await Promise.all([
+      societeId ? fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${societeId}`, { headers: headers() }).then(r => r.json()).catch(() => ({ fields: {} })) : Promise.resolve({ fields: {} }),
+    ])
+
+    const socEmail = socData.fields?.['Email'] || ''
+    const socNom = socData.fields?.['Raison sociale'] || socData.fields?.['Nom'] || 'votre société'
 
     if (!socEmail) {
       return res.status(400).json({ error: 'Aucune adresse email pour le client exposant' })
@@ -6193,16 +6227,41 @@ app.post('/api/sonia/dossier/:id/email-invoice', requireSonia, async (req, res) 
     const invoiceData = await buildInvoiceData(id)
     const pdf = await generateInvoicePDF(invoiceData)
     const filename = `${invoiceSafeFilename(invoiceData.invoiceNumber)}.pdf`
+    const totalTTC = Number(String(invoiceData.financial?.totalTTC || invoiceData.financial?.netAPayer || 0).replace(/[^0-9.,-]/g,'').replace(',','.')) || 0
+    const encaisse = Number(String(invoiceData.financial?.montantEncaisse || 0).replace(/[^0-9.,-]/g,'').replace(',','.')) || 0
+    const reste = Math.max(0, totalTTC - encaisse)
+
+    const pIds = cf['Paiements'] || []
+    const paiements = []
+    for (const pid of pIds) {
+      try {
+        const pRes = await fetch(`${ATBASE}/${encodeURIComponent('Paiements')}/${pid}`, { headers: headers() })
+        if (pRes.ok) {
+          const pd = (await pRes.json()).fields || {}
+          const m = Number(String(pd['Montant payé'] || pd['Montant'] || 0).replace(/[^0-9.,-]/g,'').replace(',','.')) || 0
+          if (m > 0) paiements.push({ montant: m, date: pd['Date paiement'] || pd['Date'] || '', mode: pd['Mode de paiement'] || '—', valide: pd['Validé par M. Hery'] === true })
+        }
+      } catch(e) { /* non bloquant */ }
+    }
+    paiements.sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    const lastPay = paiements[0]
 
     const result = await mailer(
       socEmail,
       `Facture Madavision — ${socNom}`,
       emailWrapper(`
-        <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Votre facture Madavision FIM 2026</h2>
+        <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Votre facture Madavision</h2>
         <p>Bonjour ${escapeHtml(socNom)},</p>
-        <p>Veuillez trouver ci-joint la facture pour votre participation à l'evenement.</p>
+        <p>Veuillez trouver ci-joint la facture pour votre participation à l evenement.</p>
         <div style="background:#EEF2F8;border-radius:10px;padding:18px;margin:18px 0">
-          <div style="font-size:16px;font-weight:700;color:#1B2A4A">${Number(invoiceData.total).toLocaleString('fr-FR')} Ar TTC</div>
+          <div style="font-size:16px;font-weight:700;color:#1B2A4A">${totalTTC.toLocaleString('fr-FR')} Ar TTC</div>
+          ${encaisse > 0 ? `<div style="font-size:13px;color:#16a34a;margin-top:6px">Déjà encaissé : ${encaisse.toLocaleString('fr-FR')} Ar</div>` : ''}
+          ${reste > 0 ? `<div style="font-size:13px;color:#b45309;margin-top:4px">Reste à payer : ${reste.toLocaleString('fr-FR')} Ar</div>` : `<div style="font-size:13px;color:#16a34a;margin-top:4px">✓ Solde</div>`}
+        </div>
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;margin:14px 0;font-size:13px;color:#374151;line-height:1.7">
+          <div><strong>Dossier :</strong> ${escapeHtml(numDossier)}</div>
+          <div><strong>Date commande :</strong> ${escapeHtml(dateCommande)}</div>
+          ${lastPay ? `<div><strong>Dernier paiement :</strong> ${escapeHtml(lastPay.date || '—')} — ${escapeHtml(lastPay.montant.toLocaleString('fr-FR'))} Ar (${escapeHtml(lastPay.mode)})${lastPay.valide ? ' ✓ Validé' : ''}</div>` : '<div><strong>Aucun paiement enregistré</strong></div>'}
         </div>
         <p style="font-size:13px;color:#5C5649">Commercial assigné : <strong>${escapeHtml(commNom)}</strong></p>
         <p style="font-size:12px;color:#9B9183;margin-top:16px">PDF en pièce jointe.</p>
