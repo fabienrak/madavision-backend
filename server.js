@@ -295,16 +295,16 @@ async function generateInscriptionPDF(data) {
     // RIB
     doc.fillColor(NOIR).font('Poppins-Bold').fontSize(8).text('VIREMENT BANCAIRE OU CHÈQUE', 65, y)
     doc.font('Poppins-Regular').fontSize(8).fillColor(GRIS)
-      .text('Banque : BNI MADAGASCAR - Agence : ANALAKELY', 65, y + 12)
-      .text('Compte : 00005 01010 12345678901 23', 65, y + 24)
-      .text('Ordre : MADAVISION', 65, y + 36)
+      .text('Banque : Bred Madagasikara', 65, y + 12)
+      .text('Compte : 00008/00006 02001009138 17', 65, y + 24)
+      .text('Ordre : Madavision', 65, y + 36)
 
     // Mobile Money
     doc.fillColor(NOIR).font('Poppins-Bold').fontSize(8).text('MOBILE MONEY', 300, y)
     doc.font('Poppins-Regular').fontSize(8).fillColor(GRIS)
-      .text('MVOLA : 034 02 235 44', 300, y + 12)
-      .text('AIRTEL MONEY : 033 02 235 44', 300, y + 24)
-      .text('ORANGE MONEY : 032 02 235 44', 300, y + 36)
+      .text('MVOLA : 038 17 250 11', 300, y + 12)
+      .text('AIRTEL MONEY : 033 17 250 11', 300, y + 24)
+      .text('ORANGE MONEY : 032 17 250 11', 300, y + 36)
     y += 60
 
     if (data.totalsCalc || true) {
@@ -522,6 +522,21 @@ async function atPatchRecord(table, id, fields) {
     method: 'PATCH',
     headers: headers(),
     body: JSON.stringify({ fields }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    const msg = data?.error?.message || `HTTP ${res.status}`
+    throw new Error(`atPatch "${table}" : ${msg}`)
+  }
+  return data
+}
+
+async function patchAirtableWithTypecast(table, id, fields) {
+  await sleep(220)
+  const res = await fetch(`${ATBASE}/${encodeURIComponent(table)}/${id}`, {
+    method: 'PATCH',
+    headers: headers(),
+    body: JSON.stringify({ fields, typecast: true }),
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
@@ -2707,13 +2722,15 @@ app.get('/api/sonia/dossier/:id', requireSonia, async (req, res) => {
       const pRes = await fetch(`${ATBASE}/${encodeURIComponent('Paiements')}/${pid}`, { headers: headers() })
       if (pRes.ok) {
         const pd = (await pRes.json()).fields || {}
+        const pStatut = pd['Statut'] || 'En attente'
         paiements.push({
           id: pid,
           montant: parseMGA_local(pd['Montant payé'] || pd['Montant']),
           mode:    pd['Mode de paiement'] || pd['Mode paiement'] || '—',
           date:    pd['Date paiement'] || pd['Date'] || '',
           reference: pd['Référence'] || '',
-          valide:  pd['Validé par M. Hery'] === true || (pd['Statut'] || '') === 'Validé',
+          statut:  pStatut,
+          valide:  pStatut !== 'Refusé' && (pd['Validé par M. Hery'] === true || pStatut === 'Validé'),
           notes:   pd['Notes'] || '',
         })
       }
@@ -4948,10 +4965,20 @@ async function generateProformaContractPDF(data) {
     doc.rect(60, y, 475, 55).strokeColor(BORDER).lineWidth(0.5).stroke()
     doc.fillColor(BLEU).font('Poppins-Bold').fontSize(8).text('MODALITÉS DE RÈGLEMENT (RIB)', 70, y + 10)
     doc.fillColor(NAVY).font('Poppins-Regular').fontSize(7.5)
-      .text('Banque : BNI MADAGASCAR - Agence : ANALAKELY', 70, y + 25)
-      .text('Compte : 00005 01010 12345678901 23', 70, y + 37)
-    doc.text('Virement ou chèque à l\'ordre de MADAVISION', 300, y + 25, { width: 220, align: 'right' })
-    y += 70
+      .text('Banque : Bred Madagasikara', 65, y + 12)
+      .text('Compte : 00008/00006 02001009138 17', 65, y + 24)
+      .text('Ordre : MADAVISION', 65, y + 36)
+      .text(`NIF : ${data.societe.nif || '—'}     STAT : ${data.societe.stat || '—'}`, 65, y + 46)
+      doc.text('Virement ou chèque à l\'ordre de "MADAVISION"', 300, y + 25, { width: 220, align: 'right' })
+    y += 75
+
+    // Mobile Money
+    doc.fillColor(BLEU).font('Poppins-Bold').fontSize(8).text('MOBILE MONEY', 300, y)
+    doc.font('Poppins-Regular').fontSize(7.5).fillColor(NAVY)
+      .text('MVOLA : 038 17 250 11', 300, y + 12)
+      .text('AIRTEL MONEY : 033 17 250 11', 300, y + 24)
+      .text('ORANGE MONEY : 032 17 250 11', 300, y + 36)
+    y += 55
 
     doc.addPage()
     y = 48
@@ -5432,6 +5459,27 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
     }
 
     const bilan = await fetchBilanPuissance(cmdId, cf)
+    const paiements = []
+    const paiementIds = Array.isArray(cf['Paiements']) ? cf['Paiements'] : []
+    for (const paiementId of paiementIds) {
+      try {
+        const pRes = await fetch(`${ATBASE}/${encodeURIComponent('Paiements')}/${paiementId}`, { headers: headers() })
+        if (!pRes.ok) continue
+        const pFields = (await pRes.json()).fields || {}
+        paiements.push({
+          id: paiementId,
+          montant: invoiceMoney(pFields['Montant payé'] || pFields['Montant']),
+          mode: pFields['Mode de paiement'] || pFields['Mode paiement'] || pFields['Mode'] || '—',
+          date: pFields['Date paiement'] || pFields['Date'] || '',
+          reference: pFields['Référence'] || '',
+          statut: pFields['Statut'] || 'En attente',
+          notes: pFields['Notes'] || '',
+          valide: pFields['Validé par M. Hery'] === true || (pFields['Statut'] || '') === 'Validé',
+        })
+      } catch (e) {
+        console.warn('[commercial/dossier/:id] paiement fetch failed:', e.message)
+      }
+    }
 
     // RECALCUL SÉCURITÉ DETAIL (formules identiques à Airtable)
     // Les prix stands/activités sont déjà TTC (taxe incluse)
@@ -5480,11 +5528,132 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
       optionalActivities,
       supplements,
       bilan,
+      paiements,
       commercial,
     })
   } catch(e) {
     console.error('[commercial/dossier/:id]', e.message)
     res.status(500).json({ error: DEBUG ? e.message : 'Erreur de chargement du dossier commercial' })
+  }
+})
+
+// POST /api/commercial/dossier/:id/paiement — déclaration de paiement par un commercial assigné
+app.post('/api/commercial/dossier/:id/paiement', requireCommercial, async (req, res) => {
+  try {
+    const cmdId = req.params.id
+    const data = req.body || {}
+
+    const cmdResp = await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmdId}`, { headers: headers() })
+    if (!cmdResp.ok) return res.status(404).json({ error: 'Commande introuvable' })
+    const cmd = await cmdResp.json()
+    const cf = cmd.fields || {}
+
+    const societeId = linkedRecordId(cf['Societé'] || cf['Société'])
+    const societeMap = await getCommercialSocietes(req.commercialId)
+    const societe = societeId ? societeMap[societeId] : null
+    if (!societeId || !societe) {
+      return res.status(403).json({ error: 'Ce dossier n’est pas assigné à ce commercial.' })
+    }
+
+    const montant = Number(data.montant)
+    if (!montant || montant <= 0) return res.status(400).json({ error: 'Montant invalide' })
+    if (!data.modePaiement) return res.status(400).json({ error: 'Mode de paiement requis' })
+
+    const paiementFields = {
+      'Commande': [cmdId],
+      'Montant payé': montant,
+      'Mode de paiement': data.modePaiement,
+      'Date paiement': data.date || new Date().toISOString().slice(0, 10),
+      'Statut': 'En attente',
+    }
+
+    const detailParts = []
+    if (data.reference) {
+      paiementFields['Référence'] = data.reference
+      detailParts.push(`Réf: ${data.reference}`)
+    }
+    if (data.banque) detailParts.push(`Banque: ${data.banque}`)
+    if (data.operateur) {
+      paiementFields['Operateur mobile'] = data.operateur
+      detailParts.push(`Opérateur: ${data.operateur}`)
+    }
+    if (data.numero) detailParts.push(`N°: ${data.numero}`)
+    if (data.nomSurCheque) {
+      paiementFields['Nom sur chèque'] = data.nomSurCheque
+      detailParts.push(`Nom chèque: ${data.nomSurCheque}`)
+    }
+    detailParts.push(`Déclaré par commercial: ${req.commercialEmail}`)
+    paiementFields['Notes'] = detailParts.join(' — ')
+
+    const paiement = await atPost('Paiements', paiementFields)
+
+    const commercial = await findCommercialByEmail(req.commercialEmail)
+    const socNom = societe.nom || societe.raw?.['Raison sociale'] || '—'
+    const socEmail = data.emailExposant || societe.email || societe.raw?.['Email'] || ''
+    const numDossier = cf['Numero de dossier'] || cf['ID Commande'] || cmdId.slice(-8).toUpperCase()
+    const paymentDate = data.date || new Date().toISOString().slice(0, 10)
+    let emailSent = false
+
+    if (mailTransporter) {
+      const adminHtml = emailWrapper(`
+        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Nouvelle déclaration de paiement</h2>
+        <p>Le commercial <strong>${escapeHtml(commercial?.nom || req.commercialEmail)}</strong> a déclaré un règlement pour <strong>${escapeHtml(socNom)}</strong>.</p>
+        <div style="background:#F5F7FA;border-left:4px solid #195b98;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+          <div style="font-size:13px;color:#687e7e;margin-bottom:4px">Montant déclaré</div>
+          <div style="font-size:20px;font-weight:700;color:#195b98;font-family:monospace">${fmtMoney(montant)}</div>
+          <div style="margin-top:12px;font-size:13px;color:#0d0d0d;line-height:1.6">
+            <strong>Dossier :</strong> ${escapeHtml(numDossier)}<br/>
+            <strong>Mode :</strong> ${escapeHtml(data.modePaiement)}<br/>
+            <strong>Référence :</strong> ${escapeHtml(data.reference || '—')}<br/>
+            ${data.banque ? `<strong>Banque :</strong> ${escapeHtml(data.banque)}<br/>` : ''}
+            ${data.operateur ? `<strong>Opérateur :</strong> ${escapeHtml(data.operateur)}<br/>` : ''}
+            <strong>Déclaré par :</strong> ${escapeHtml(req.commercialEmail)}
+          </div>
+        </div>
+        <p style="font-size:13px;color:#687e7e">Action : Vérifier et valider le paiement dans Airtable → table <strong>Paiements</strong>.</p>
+      `)
+
+      const exhibHtml = emailWrapper(`
+        <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Confirmation réception paiement</h2>
+        <p>Bonjour,</p>
+        <p>Nous avons bien enregistré une déclaration de paiement pour votre dossier.</p>
+        <div style="background:#E8F7EF;border-left:4px solid #1E7F54;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+          <div style="font-size:20px;font-weight:700;color:#1E7F54;font-family:monospace">${fmtMoney(montant)}</div>
+          <div style="margin-top:12px;font-size:13px;color:#0d0d0d;line-height:1.6">
+            <strong>Dossier :</strong> ${escapeHtml(numDossier)}<br/>
+            <strong>Mode :</strong> ${escapeHtml(data.modePaiement)}<br/>
+            <strong>Date :</strong> ${escapeHtml(paymentDate)}<br/>
+            ${data.reference ? `<strong>Référence :</strong> ${escapeHtml(data.reference)}<br/>` : ''}
+            <strong>Statut :</strong> <span style="color:#b45309">En attente de validation</span>
+          </div>
+        </div>
+        <p style="font-size:13px;color:#687e7e;line-height:1.5">
+          Notre équipe administrative va procéder à la vérification de la transaction.<br/>
+          Le statut du règlement sera mis à jour dans votre espace exposant sous <strong>24–48h ouvrables</strong>.
+        </p>
+        <p style="font-size:13px;color:#687e7e">Merci de votre confiance.</p>
+        <p style="font-size:13px;margin-top:20px">Cordialement,<br/><strong>L'Administration Madavision</strong></p>
+      `)
+
+      const adminMail = await mailer(EMAIL_CONFIG.fromAddress, `Déclaration paiement — ${socNom}`, adminHtml)
+      if (commercial?.email || req.commercialEmail) {
+        mailer(commercial?.email || req.commercialEmail, `[Suivi] Paiement déclaré — ${socNom}`, adminHtml).catch(() => {})
+      }
+      const exhibMail = socEmail
+        ? await mailer(socEmail, 'Confirmation réception paiement — Madavision', exhibHtml)
+        : { sent: false, error: 'no_recipient' }
+      emailSent = Boolean(adminMail.sent || exhibMail.sent)
+    }
+
+    res.json({
+      success: true,
+      paiementId: paiement.id,
+      emailSent,
+      message: 'Paiement déclaré avec succès. Notre équipe validera sous 48h.',
+    })
+  } catch (e) {
+    console.error('[commercial/paiement] error:', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur lors de la déclaration de paiement' })
   }
 })
 
@@ -5843,15 +6012,16 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       const cIds = Array.isArray(f['Commande']) ? f['Commande'] : (f['Commande'] ? [f['Commande']] : [])
       cIds.forEach(cId => {
         if (!paiementsMap[cId]) paiementsMap[cId] = []
+        const statut = f['Statut'] || 'En attente'
         paiementsMap[cId].push({
           id:      r.id,
           montant: parseMGA2(f['Montant payé'] || f['Montant']),
           mode:    f['Mode de paiement'] || f['Mode paiement'] || f['Mode'] || '—',
           date:    f['Date paiement'] || f['Date'] || '',
           reference: f['Référence'] || '',
-          statut:  f['Statut'] || 'En attente',
+          statut,
           notes:   f['Notes'] || '',
-          valide:  f['Validé par M. Hery'] === true || (f['Statut'] || '') === 'Validé',
+          valide:  statut !== 'Refusé' && (f['Validé par M. Hery'] === true || statut === 'Validé'),
         })
       })
     })
@@ -6084,6 +6254,159 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
   } catch(e) {
     console.error('[sonia/dossiers]', e.message)
     res.status(500).json({ error: e.message })
+  }
+})
+
+// GET /api/sonia/paiements — validation administrative des paiements déclarés
+app.get('/api/sonia/paiements', requireSonia, async (req, res) => {
+  try {
+    const parseMGA = v => parseFloat(String(v || 0).replace(/[^0-9.,-]/g, '').replace(',', '.')) || 0
+
+    const [paiementRecords, commandeRecords, societeRecords, commerciauxRecords] = await Promise.all([
+      atGet('Paiements', `maxRecords=500&sort%5B0%5D%5Bfield%5D=${encodeURIComponent('Date paiement')}&sort%5B0%5D%5Bdirection%5D=desc`),
+      atGet('Commandes', 'maxRecords=500'),
+      atGet('Sociétés', 'maxRecords=500'),
+      atGet('Commerciaux', 'maxRecords=500').catch(() => []),
+    ])
+
+    const commerciaux = {}
+    commerciauxRecords.forEach(record => {
+      const f = record.fields || {}
+      commerciaux[record.id] = {
+        id: record.id,
+        nom: f['Nom'] || f['Nom complet'] || f['Prénom Nom'] || record.id,
+        email: f['Email'] || f['Email professionnel'] || f['Mail'] || '',
+      }
+    })
+
+    const societes = {}
+    societeRecords.forEach(record => {
+      const f = record.fields || {}
+      const commId = Array.isArray(f['Commerciaux']) ? f['Commerciaux'][0] : null
+      societes[record.id] = {
+        id: record.id,
+        nom: f['Raison sociale'] || f['Nom'] || f['Name'] || record.id,
+        email: f['Email'] || '',
+        idEntreprise: f['ID Entreprise'] || '',
+        commercialId: commId,
+        commercial: commId ? commerciaux[commId] : null,
+      }
+    })
+
+    const commandes = {}
+    commandeRecords.forEach(record => {
+      const f = record.fields || {}
+      const societeId = linkedRecordId(f['Societé'] || f['Société'])
+      commandes[record.id] = {
+        id: record.id,
+        numeroDossier: f['Numero de dossier'] || f['ID Commande'] || record.id.slice(-8).toUpperCase(),
+        dateCommande: f['Date commande'] || '',
+        statut: f['Validation'] || '',
+        statutCommande: f['Statut commande'] || '',
+        societeId,
+        societe: societeId ? societes[societeId] : null,
+      }
+    })
+
+    const paiements = paiementRecords.map(record => {
+      const f = record.fields || {}
+      const commandeId = linkedRecordId(f['Commande'])
+      const commande = commandeId ? commandes[commandeId] : null
+      const societe = commande?.societe || null
+      const statut = f['Statut'] || 'En attente'
+      return {
+        id: record.id,
+        commandeId,
+        commande: commande ? {
+          id: commande.id,
+          numeroDossier: commande.numeroDossier,
+          dateCommande: commande.dateCommande,
+          statut: commande.statut,
+          statutCommande: commande.statutCommande,
+        } : null,
+        societe: societe ? {
+          id: societe.id,
+          nom: societe.nom,
+          email: societe.email,
+          idEntreprise: societe.idEntreprise,
+        } : null,
+        commercial: societe?.commercial || null,
+        montant: parseMGA(f['Montant payé'] || f['Montant']),
+        mode: f['Mode de paiement'] || f['Mode paiement'] || f['Mode'] || '—',
+        date: f['Date paiement'] || f['Date'] || record.createdTime || '',
+        reference: f['Référence'] || '',
+        statut,
+        notes: f['Notes'] || '',
+        valide: statut !== 'Refusé' && (f['Validé par M. Hery'] === true || statut === 'Validé'),
+      }
+    })
+
+    res.json({ paiements })
+  } catch (e) {
+    console.error('[sonia/paiements]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur de chargement des paiements' })
+  }
+})
+
+// POST /api/sonia/paiements/:id/status — accepter ou refuser un paiement
+app.post('/api/sonia/paiements/:id/status', requireSonia, async (req, res) => {
+  try {
+    const paiementId = req.params.id
+    const requestedStatus = String(req.body?.status || '').trim()
+    const raison = String(req.body?.raison || '').trim()
+    const status = requestedStatus === 'Validé'
+      ? 'Validé'
+      : requestedStatus === 'Refusé'
+        ? 'Refusé'
+        : ''
+    if (!status) return res.status(400).json({ error: 'Statut de paiement invalide.' })
+
+    const currentRes = await fetch(`${ATBASE}/${encodeURIComponent('Paiements')}/${paiementId}`, { headers: headers() })
+    if (!currentRes.ok) return res.status(404).json({ error: 'Paiement introuvable' })
+    const current = await currentRes.json()
+    const currentFields = current.fields || {}
+
+    const noteParts = []
+    if (currentFields['Notes']) noteParts.push(currentFields['Notes'])
+    noteParts.push(`${status} par ${req.soniaEmail} le ${new Date().toISOString().slice(0, 10)}`)
+    if (raison) noteParts.push(`Motif: ${raison}`)
+
+    const fields = {
+      'Statut': status,
+      'Validé par M. Hery': status === 'Validé',
+      'Date validation': new Date().toISOString().slice(0, 10),
+      'Notes': noteParts.join(' — '),
+    }
+
+    let updated
+    try {
+      updated = await patchAirtableWithTypecast('Paiements', paiementId, fields)
+    } catch (firstError) {
+      console.warn('[sonia/paiements/status] full patch failed, retrying status only:', firstError.message)
+      updated = await patchAirtableWithTypecast('Paiements', paiementId, {
+        'Statut': status,
+        'Notes': noteParts.join(' — '),
+      })
+    }
+
+    const f = updated.fields || {}
+    const finalStatus = f['Statut'] || status
+    res.json({
+      success: true,
+      paiement: {
+        id: updated.id,
+        montant: invoiceMoney(f['Montant payé'] || f['Montant']),
+        mode: f['Mode de paiement'] || f['Mode paiement'] || f['Mode'] || '—',
+        date: f['Date paiement'] || f['Date'] || '',
+        reference: f['Référence'] || '',
+        statut: finalStatus,
+        notes: f['Notes'] || '',
+        valide: finalStatus !== 'Refusé' && (f['Validé par M. Hery'] === true || finalStatus === 'Validé'),
+      },
+    })
+  } catch (e) {
+    console.error('[sonia/paiements/status]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur de mise à jour du paiement' })
   }
 })
 
