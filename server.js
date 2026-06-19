@@ -2263,7 +2263,8 @@ app.post('/api/inscription', async (req, res) => {
     // ── Email de confirmation à l'exposant (fire-and-forget) ──
     if (mailTransporter && data.email) {
       const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')
-      const espaceUrl    = `${frontendBase}/exposant/${accessToken}`
+      // const espaceUrl    = `${frontendBase}/exposant/${accessToken}`
+      const espaceUrl    = `${frontendBase}/exposant`
       const numDossier   = cmd.id.slice(-8).toUpperCase()
       const nomSoc       = escapeHtml(data.nomSociete || data.nomSoc || 'votre société')
       const salonLabel   = escapeHtml(inscriptionSalonLabel || 'Madavision')
@@ -6482,7 +6483,7 @@ app.post('/api/sonia/accounts', requireSonia, async (req, res) => {
     }
 
     const user = await ensureAuthUser({ email, role, linkedRecordId, password })
-    const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')
+    const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173' || 'http://localhost:8080').replace(/\/$/, '')
     const spacePath = role === 'commercial' ? '/commercial' : role === 'exposant' ? '/exposant' : '/sonia'
     const accessUrl = `${frontendBase}${spacePath}`
     const roleText = role === 'commercial' ? 'Espace commercial' : role === 'exposant' ? 'Espace exposant' : 'Espace administration'
@@ -6500,7 +6501,7 @@ app.post('/api/sonia/accounts', requireSonia, async (req, res) => {
         </div>
         <p>Vous pouvez maintenant vous connecter avec cet email et le mot de passe défini lors de la création du compte.</p>
         <div style="margin-top:22px">
-          <a href="${accessUrl}" style="background:#1B2A4A;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
+          <a href="${frontendBase}/exposant" style="background:#1B2A4A;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace</a>
         </div>
         <div style="font-size:11px;color:#9B9183;margin-top:10px;word-break:break-all">${accessUrl}</div>
       `)
