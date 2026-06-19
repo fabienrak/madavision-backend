@@ -1349,7 +1349,7 @@ app.get('/api/bootstrap', async (req, res) => {
         const f = r.fields
 
         // Le champ 'Édition' dans Stands pointe maintenant vers la table Salons
-        const standSalonIds = f['Edition'] || f['Edition'] || f['Editions'] || f['Éditions'] || []
+        const standSalonIds = f['Edition'] || f['Édition'] || f['Editions'] || f['Éditions'] || []
         const salonIds = Array.isArray(standSalonIds) ? standSalonIds : [standSalonIds]
 
         return {
@@ -2016,6 +2016,58 @@ app.post('/api/inscription', async (req, res) => {
       ? `Conditions : Mode urgent (<30 jours) — acompte sous 20 jours`
       : `Conditions : Mode standard — contrat 7j puis acompte 20j`)
 
+    let salonRecordId = String(data.salonId || data.editionId || '').trim()
+    let salonLinkIds = salonRecordId.startsWith('rec') ? [salonRecordId] : []
+    if (salonLinkIds.length === 0) {
+      for (const standId of emplacementIdsRequested) {
+        try {
+          const standResp = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${standId}`, { headers: headers() })
+          if (!standResp.ok) continue
+          const standData = await standResp.json()
+          const standFields = standData.fields || {}
+          const inferredSalonId = linkedRecordId(
+            standFields['Edition'] ||
+            standFields['Édition'] ||
+            standFields['Editions'] ||
+            standFields['Éditions'] ||
+            standFields['Salon'] ||
+            standFields['Salons']
+          )
+          if (inferredSalonId) {
+            salonRecordId = inferredSalonId
+            salonLinkIds = [inferredSalonId]
+            break
+          }
+        } catch (e) {
+          console.warn('[inscription] salon via stand:', e.message)
+        }
+      }
+    }
+    const inscriptionSalon = {
+      label: data.salonLabel || data.eventLabel || '',
+      edition: data.editionLabel || '',
+      lieu: data.salonLieu || data.lieu || '',
+      dateDebut: data.salonDateDebut || '',
+      dateFin: data.salonDateFin || '',
+    }
+    if (salonLinkIds.length > 0) {
+      try {
+        const salonResp = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${salonLinkIds[0]}`, { headers: headers() })
+        if (salonResp.ok) {
+          const salonData = await salonResp.json()
+          const sfSalon = salonData.fields || {}
+          inscriptionSalon.label = sfSalon['Nom du salon'] || sfSalon['Nom'] || sfSalon['Name'] || sfSalon['ID Salon'] || inscriptionSalon.label
+          inscriptionSalon.edition = sfSalon['Edition'] || sfSalon['Édition'] || sfSalon['Nom édition'] || inscriptionSalon.edition
+          inscriptionSalon.lieu = sfSalon['Lieu'] || sfSalon['Ville'] || inscriptionSalon.lieu
+          inscriptionSalon.dateDebut = sfSalon['Date début'] || sfSalon['Date de début'] || inscriptionSalon.dateDebut
+          inscriptionSalon.dateFin = sfSalon['Date fin'] || sfSalon['Date de fin'] || inscriptionSalon.dateFin
+        }
+      } catch (e) {
+        console.warn('[inscription] résolution salon:', e.message)
+      }
+    }
+    const inscriptionSalonLabel = [inscriptionSalon.label, inscriptionSalon.edition].filter(Boolean).join(' - ')
+
     const cmdFields = {
       'Societé':         [socId],
       'Statut commande': 'En attente validation',
@@ -2024,6 +2076,9 @@ app.post('/api/inscription', async (req, res) => {
       'Notes':           notes.join('\n'),
       'Activités optionnelles': data.activitesOptionnellesIds || [],
       "Token d'accès":   accessToken,
+    }
+    if (salonLinkIds.length > 0) {
+      cmdFields['Salons'] = salonLinkIds
     }
     if (data.descriptionActivite) {
       cmdFields['Description activités'] = data.descriptionActivite
@@ -2174,10 +2229,10 @@ app.post('/api/inscription', async (req, res) => {
     try {
       pdfBuffer = await generateInscriptionPDF({
         numDossier:       cmd.id.slice(-8).toUpperCase(),
-        salonLabel:       data.salonLabel    || data.editionLabel || '',
-        salonLieu:        data.salonLieu     || data.lieu         || '',
-        salonDateDebut:   data.salonDateDebut || '',
-        salonDateFin:     data.salonDateFin   || '',
+        salonLabel:       inscriptionSalonLabel,
+        salonLieu:        inscriptionSalon.lieu,
+        salonDateDebut:   inscriptionSalon.dateDebut,
+        salonDateFin:     inscriptionSalon.dateFin,
         nomSociete:       data.nomSociete    || data.nomSoc       || '',
         nomParticipation: data.nomParticipation || '',
         typeEntite:       data.typeEntite    || '',
@@ -2211,7 +2266,7 @@ app.post('/api/inscription', async (req, res) => {
       const espaceUrl    = `${frontendBase}/exposant/${accessToken}`
       const numDossier   = cmd.id.slice(-8).toUpperCase()
       const nomSoc       = escapeHtml(data.nomSociete || data.nomSoc || 'votre société')
-      const salonLabel   = escapeHtml(data.salonLabel || data.editionLabel || '')
+      const salonLabel   = escapeHtml(inscriptionSalonLabel || 'Madavision')
 
       const emailHtml = emailWrapper(`
         <h2 style="color:#195b98;font-size:18px;margin:0 0 14px">Confirmation d'inscription — ${numDossier}</h2>
@@ -2351,21 +2406,47 @@ app.get('/api/exposant/:token', async (req, res) => {
     const socRecords = await atFind('Sociétés', `RECORD_ID()="${societeId}"`)
     const sf = socRecords[0]?.fields || {}
 
-    // 3. Édition liée (via la commande)
-    const editionId = (cf['Édition'] || cf['Edition'] || cf['Societé'] || [])[0]
+    // 3. Salon / Édition lié (via la commande ou via le stand)
+    const firstLinkedId = value => Array.isArray(value) ? value[0] : value
+    let salonOrEditionId = firstLinkedId(cf['Édition'] || cf['Edition'] || cf['Salons'] || cf['Salon'])
+    const standIds = Array.isArray(cf['Stand ou service commandé']) ? cf['Stand ou service commandé'] : []
+    if (!salonOrEditionId) {
+      for (const sid of standIds) {
+        try {
+          const sRes = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${sid}`, { headers: headers() })
+          if (sRes.ok) {
+            const sData = await sRes.json()
+            const lid = firstLinkedId(
+              sData.fields?.['Édition'] ||
+              sData.fields?.['Edition'] ||
+              sData.fields?.['Éditions'] ||
+              sData.fields?.['Editions'] ||
+              sData.fields?.['Salon'] ||
+              sData.fields?.['Salons']
+            )
+            if (lid) { salonOrEditionId = lid; break }
+          }
+        } catch (e) {
+          console.warn('[exposant] résolution salon via stand échouée:', e.message)
+        }
+      }
+    }
+
     let edition = null
-    if (editionId) {
-      const edRes  = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${editionId}`, { headers: headers() })
+    if (salonOrEditionId) {
+      const edRes = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${salonOrEditionId}`, { headers: headers() })
       if (edRes.ok) {
         const edData = await edRes.json()
         const ef = edData.fields || {}
         edition = {
-          id: edData.id,
-          nom:       ef['Edition'] || ef['Nom du salon'] || edData.id,
+          id:        edData.id,
+          nom:       ef['Edition'] || ef['Édition'] || ef['Nom édition'] || ef['Nom du salon'] || edData.id,
+          evenement: ef['Événement'] || ef['Evenement'] || ef['Salon'] || ef['Nom du salon'] || '',
           dateDebut: ef['Date début'] || ef['Date de début'] || '',
           dateFin:   ef['Date fin'] || ef['Date de fin'] || '',
           lieu:      ef['Lieu'] || ef['Ville'] || '',
           salonId:   edData.id,
+          salonIds:  [edData.id],
         }
       }
     }
@@ -2489,6 +2570,7 @@ app.get('/api/exposant/:token', async (req, res) => {
         })
       }
     }
+    const documents = buildExposantDocuments({ token, cmd, documentsFinanciers })
 
     // 8b. Historique des vouchers utilisés par cette participation
     // (recherche les utilisations dans Utilisations Voucher liées aux commandes de cette participation)
@@ -2565,6 +2647,7 @@ app.get('/api/exposant/:token', async (req, res) => {
         id:              societeId,
         raisonSociale:   sf['Raison sociale'],
         typeEntite:      sf["Type d'entité"],
+        secteur:         sf["Secteur d'activité"],
         adresse:         sf['Adresse'],
         ville:           sf['Ville'],
         telephone:       sf['Téléphone'],
@@ -2581,6 +2664,7 @@ app.get('/api/exposant/:token', async (req, res) => {
       commandes: [commandeData],
       stands,
       paiements,
+      documents,
       documentsFinanciers,
       optionalActivities,
       bilan,
@@ -3204,6 +3288,117 @@ async function findCommandeByAccessToken(rawToken) {
   return records[0] || null
 }
 
+function buildExposantDocuments({ token, cmd, documentsFinanciers = [] }) {
+  const cf = cmd?.fields || {}
+  const cleanToken = String(token || '').toUpperCase().replace('TOKEN:', '').replace(/[^A-Z0-9]/g, '')
+  const dossierNumber = cf['Numero de dossier'] || cf['ID Commande'] || cmd?.id?.slice(-8).toUpperCase() || ''
+  const statusText = [
+    cf['Validation'],
+    cf['Statut commande'],
+    cf['Statut'],
+  ].filter(Boolean).join(' ')
+  const normalizedStatus = statusText
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+  const isCancelledOrRejected = /annul|rejet/.test(normalizedStatus)
+  const isValidated = /\b(valide|confirme|confirmer|paye|solde|bc recu)\b/.test(normalizedStatus)
+  const documents = []
+
+  documents.push({
+    id: 'dossier-inscription',
+    type: 'Dossier',
+    title: "Dossier d'inscription",
+    filename: 'dossier-inscription.pdf',
+    reference: dossierNumber,
+    date: cf['Date commande'] || '',
+    status: 'Disponible',
+    description: "Dossier d'inscription complet généré depuis les informations du dossier.",
+    downloadUrl: `/exposant/${cleanToken}/download-dossier`,
+  })
+
+  if (!isCancelledOrRejected && isValidated) {
+    documents.push({
+      id: 'proforma-contrat',
+      type: 'Proforma',
+      title: 'Facture proforma + contrat CGV',
+      filename: `${invoiceSafeFilename(`proforma-contrat-${dossierNumber || cmd.id}`)}.pdf`,
+      reference: dossierNumber,
+      date: cf['Date validation'] || cf['Date commande'] || '',
+      status: 'Disponible',
+      description: 'Facture proforma et engagement CGV dans un seul fichier PDF.',
+      downloadUrl: `/exposant/${cleanToken}/download-proforma-contract`,
+    })
+
+    documents.push({
+      id: 'facture-finale',
+      type: 'Facture',
+      title: 'Facture PDF',
+      filename: `${invoiceSafeFilename(`FACT-${dossierNumber || cmd.id}`)}.pdf`,
+      reference: dossierNumber,
+      date: cf['Date validation'] || cf['Date commande'] || '',
+      amount: cf['Net a payer'] || cf['Total TTC'] || 0,
+      status: 'Disponible',
+      description: 'Facture générée à partir des montants, remises, vouchers et taxes du dossier.',
+      downloadUrl: `/exposant/${cleanToken}/download-invoice`,
+    })
+  }
+
+  documentsFinanciers.forEach((doc, index) => {
+    const files = Array.isArray(doc.pdfUrls) ? doc.pdfUrls : []
+    if (files.length === 0) {
+      documents.push({
+        id: `finance-${doc.id || index}`,
+        type: doc.type || 'Document financier',
+        title: doc.type || 'Document financier',
+        filename: doc.reference || 'document-financier.pdf',
+        reference: doc.reference || '',
+        date: doc.dateEmission || '',
+        amount: doc.ttc || doc.montantHT || 0,
+        status: doc.statut || 'PDF non disponible',
+        description: 'Document financier enregistré dans Airtable.',
+        disabled: true,
+      })
+      return
+    }
+
+    files.forEach((file, fileIndex) => {
+      documents.push({
+        id: `finance-${doc.id || index}-${fileIndex}`,
+        type: doc.type || 'Document financier',
+        title: doc.type || 'Document financier',
+        filename: file.filename || doc.reference || 'document-financier.pdf',
+        reference: doc.reference || '',
+        date: doc.dateEmission || '',
+        amount: doc.ttc || doc.montantHT || 0,
+        status: doc.statut || 'Disponible',
+        description: 'Document financier enregistré dans Airtable.',
+        externalUrl: file.url,
+      })
+    })
+  })
+
+  const notes = String(cf['Notes'] || '')
+  const bcMatches = [...notes.matchAll(/\[BC ([^\]]+)\] ([^\n]+)/g)]
+  bcMatches.forEach((match, index) => {
+    const filename = String(match[2] || '').trim()
+    if (!filename) return
+    documents.push({
+      id: `bc-${index}`,
+      type: 'BC',
+      title: 'Bon de Commande déposé',
+      filename,
+      reference: dossierNumber,
+      date: match[1] || '',
+      status: 'Déposé',
+      description: 'Bon de Commande transmis à l’administration Madavision.',
+      downloadUrl: `/exposant/${cleanToken}/download-bc/${encodeURIComponent(filename)}`,
+    })
+  })
+
+  return documents
+}
+
 async function requireExposantTokenAccess(req, res, next) {
   try {
     const auth = await authenticateRequest(req)
@@ -3380,6 +3575,96 @@ app.post('/api/exposant/:token/cancel', async (req, res) => {
   }
 })
 
+async function notifyExposantDossierUpdate({ cmd, socId, socFields = {}, changes = [], standLabels = [], demandeModification = '' }) {
+  if (!mailTransporter) return { sent: false, error: 'smtp_disabled' }
+
+  try {
+    let sf = socFields
+    if (!sf || Object.keys(sf).length === 0) {
+      const socRes = await fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, { headers: headers() })
+      if (socRes.ok) sf = (await socRes.json()).fields || {}
+    }
+
+    const cf = cmd.fields || {}
+    const socNom = sf['Raison sociale'] || sf['Nom'] || '—'
+    const socEmail = sf['Email'] || ''
+    const numDossier = cf['Numero de dossier'] || cf['ID Commande'] || cmd.id.slice(-8).toUpperCase()
+    const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '')
+    const changeList = changes.length ? changes : ['Modification du dossier exposant']
+    const standSection = standLabels.length
+      ? `<div style="font-size:13px;color:#1B2A4A;margin-top:8px"><strong>Stands sélectionnés :</strong> ${escapeHtml(standLabels.join(', '))}</div>`
+      : ''
+    const demandeSection = demandeModification
+      ? `<div style="font-size:13px;color:#1B2A4A;margin-top:8px"><strong>Demande :</strong> ${escapeHtml(demandeModification)}</div>`
+      : ''
+
+    const adminHtml = emailWrapper(`
+      <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Dossier exposant modifié</h2>
+      <p>L'exposant <strong>${escapeHtml(socNom)}</strong> a mis à jour son dossier depuis l'espace exposant.</p>
+      <div style="background:#FFF7E8;border-left:4px solid #C87B2F;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:#C87B2F;margin-bottom:8px">Nouvelle validation requise</div>
+        <div style="font-size:13px;color:#1B2A4A"><strong>Dossier :</strong> ${escapeHtml(numDossier)}</div>
+        <div style="font-size:13px;color:#1B2A4A;margin-top:4px"><strong>Société :</strong> ${escapeHtml(socNom)}</div>
+        ${socEmail ? `<div style="font-size:13px;color:#1B2A4A;margin-top:4px"><strong>Email :</strong> ${escapeHtml(socEmail)}</div>` : ''}
+        <div style="font-size:13px;color:#1B2A4A;margin-top:8px"><strong>Modifications :</strong> ${changeList.map(escapeHtml).join(', ')}</div>
+        ${standSection}
+        ${demandeSection}
+        <div style="font-size:13px;color:#b45309;margin-top:12px"><strong>Statut :</strong> En attente de validation / A Valider</div>
+      </div>
+      <div style="margin-top:24px">
+        <a href="${frontendBase}/sonia" style="background:#1B2A4A;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à l'administration</a>
+      </div>
+    `)
+
+    const adminMail = await mailer(EMAIL_CONFIG.fromAddress, `Modification dossier exposant — ${socNom}`, adminHtml)
+
+    const commercialIds = [
+      ...(Array.isArray(sf['Commerciaux']) ? sf['Commerciaux'] : []),
+      ...(Array.isArray(cf['Commerciaux']) ? cf['Commerciaux'] : []),
+      ...(Array.isArray(cf['Commercial affecté']) ? cf['Commercial affecté'] : []),
+    ].filter((id, index, arr) => id && arr.indexOf(id) === index)
+    const commercialMails = []
+    for (const commercialId of commercialIds) {
+      try {
+        const commRes = await fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commercialId}`, { headers: headers() })
+        if (!commRes.ok) continue
+        const commFields = (await commRes.json()).fields || {}
+        const commEmail = commFields['Email'] || commFields['Email professionnel'] || commFields['Mail']
+        if (commEmail) commercialMails.push(commEmail)
+      } catch (e) {
+        console.warn('[notifyExposantDossierUpdate] commercial fetch:', e.message)
+      }
+    }
+
+    await Promise.allSettled(commercialMails.map(email =>
+      mailer(email, `[Suivi] Dossier modifié — ${socNom}`, adminHtml)
+    ))
+
+    if (socEmail) {
+      const exposantHtml = emailWrapper(`
+        <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Modification de votre dossier enregistrée</h2>
+        <p>Bonjour,</p>
+        <p>Nous avons bien reçu la mise à jour de votre dossier <strong>${escapeHtml(numDossier)}</strong>.</p>
+        <div style="background:#EEF2F8;border-left:4px solid #195b98;padding:16px 20px;border-radius:0 12px 12px 0;margin:20px 0">
+          <div style="font-size:13px;color:#1B2A4A"><strong>Modifications :</strong> ${changeList.map(escapeHtml).join(', ')}</div>
+          ${standSection}
+          <div style="font-size:13px;color:#b45309;margin-top:12px"><strong>Statut :</strong> En attente de validation</div>
+        </div>
+        <p style="font-size:13px;color:#687e7e">L'administration Madavision va vérifier les changements avant validation finale.</p>
+        <div style="margin-top:24px">
+          <a href="${frontendBase}/exposant" style="background:#1B2A4A;color:#fff;text-decoration:none;padding:10px 22px;border-radius:8px;display:inline-block;font-weight:600;font-size:13px">Accéder à mon espace exposant</a>
+        </div>
+      `)
+      await mailer(socEmail, 'Modification de votre dossier — Madavision', exposantHtml)
+    }
+
+    return { sent: Boolean(adminMail.sent), to: EMAIL_CONFIG.fromAddress }
+  } catch (e) {
+    console.warn('[notifyExposantDossierUpdate]', e.message)
+    return { sent: false, error: e.message }
+  }
+}
+
 // POST /api/exposant/:token/update — modifier les infos exposant
 app.post('/api/exposant/:token/update', async (req, res) => {
   try {
@@ -3399,78 +3684,153 @@ app.post('/api/exposant/:token/update', async (req, res) => {
     const socId = (cf['Societé'] || cf['Société'] || [])[0]
     if (!socId) return res.status(404).json({ error: 'Société introuvable' })
 
-    // ── NOUVEAU : Traitement du logo via Cloudinary ──
+    const hasField = key => Object.prototype.hasOwnProperty.call(data, key)
+    const cleanText = value => String(value ?? '').trim()
+    const normalizeRegimeFiscalInput = value => {
+      const raw = cleanText(value).toLowerCase()
+      if (!raw) return null
+      if (raw === '0.2' || raw.includes('20')) return '0.2'
+      if (raw === '0.08' || raw.includes('8')) return '0.08'
+      if (raw === '0' || raw.includes('exon')) return '0'
+      return undefined
+    }
+    const regimeFiscalValue = normalizeRegimeFiscalInput(data.regimeFiscal)
+    if (hasField('raisonSociale') && !cleanText(data.raisonSociale)) {
+      return res.status(400).json({ error: 'La raison sociale est obligatoire.' })
+    }
+    if (hasField('regimeFiscal') && regimeFiscalValue === undefined) {
+      return res.status(400).json({ error: 'Régime fiscal invalide.' })
+    }
+
+    // Traitement du logo via Cloudinary si un nouveau logo est envoyé.
     data.logoUrl = await handleImageUpload(data.logoUrl || data.logoSocieteUrl || data.logoParticipation || data.logo)
 
-    // Champs modifiables par l'exposant (infos de contact uniquement)
+    // Champs modifiables par l'exposant : société + interlocuteur.
     const socFields = {}
-    if (data.telephone)       socFields['Téléphone']        = data.telephone
-    if (data.adresse)         socFields['Adresse']          = data.adresse
-    if (data.contact)         socFields['Contact principal'] = data.contact
-    if (data.fonction)        socFields['Fonction contact']  = data.fonction
+    if (hasField('raisonSociale')) socFields['Raison sociale'] = cleanText(data.raisonSociale)
+    if (hasField('typeEntite'))    socFields["Type d'entité"] = cleanText(data.typeEntite)
+    if (hasField('secteur'))       socFields["Secteur d'activité"] = cleanText(data.secteur)
+    if (hasField('adresse'))       socFields['Adresse'] = cleanText(data.adresse)
+    if (hasField('telephone'))     socFields['Téléphone'] = cleanText(data.telephone)
+    if (hasField('nif'))           socFields['NIF'] = cleanText(data.nif)
+    if (hasField('stat'))          socFields['STAT'] = cleanText(data.stat)
+    if (hasField('regimeFiscal')) socFields['Régime fiscal'] = regimeFiscalValue
+    if (hasField('contact'))       socFields['Contact principal'] = cleanText(data.contact)
+    if (hasField('fonction'))      socFields['Fonction contact'] = cleanText(data.fonction)
     if (data.logoUrl) {
       socFields['Logo'] = [{ url: data.logoUrl }]
     }
 
+    let requiresValidation = Object.keys(socFields).length > 0
+    let standsToFree = []
+    let standsToReserve = []
+    let updatedSocFields = {}
+    const notificationChanges = []
+    const notificationStandLabels = []
+    const demandeModificationText = hasField('demandeModification') ? cleanText(data.demandeModification) : ''
+
     if (Object.keys(socFields).length > 0) {
-      await fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, {
-        method: 'PATCH',
-        headers: headers(),
-        body: JSON.stringify({ fields: socFields }),
-      })
+      const updatedSoc = await atPatchRecord('Sociétés', socId, socFields)
+      updatedSocFields = updatedSoc.fields || {}
+      notificationChanges.push('Informations société / interlocuteur')
     }
 
+    const cmdFields = {}
+
     // Demandes de modification (stand, emplacement) → note dans la participation
-    if (data.demandeModification) {
+    if (hasField('demandeModification') && demandeModificationText) {
       const noteActuelle = cf['Notes'] || ''
-      const noteAjout = `\n[DEMANDE MODIFICATION ${new Date().toLocaleDateString('fr-FR')}] ${data.demandeModification}`
-      await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmd.id}`, {
-        method: 'PATCH',
-        headers: headers(),
-        body: JSON.stringify({ fields: { 'Notes': (noteActuelle + noteAjout).trim() } }),
-      })
+      const noteAjout = `\n[DEMANDE MODIFICATION ${new Date().toLocaleDateString('fr-FR')}] ${demandeModificationText}`
+      cmdFields['Notes'] = (noteActuelle + noteAjout).trim()
+      requiresValidation = true
+      notificationChanges.push('Demande de modification')
     }
 
     // Modification des stands sélectionnés
     if (Array.isArray(data.standIds)) {
-      const cmdFields = {}
-      cmdFields['Stand ou service commandé'] = data.standIds
-      cmdFields['Validation'] = 'A valider'
-      cmdFields['Statut commande'] = 'En attente de validation'
-
-      await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmd.id}`, {
-        method: 'PATCH',
-        headers: headers(),
-        body: JSON.stringify({ fields: cmdFields }),
-      })
-
       const currentStandIds = (cf['Stand ou service commandé'] || []).map(id => String(id))
-      const newStandIds = data.standIds.map(String)
+      const newStandIds = [...new Set(data.standIds.map(id => String(id || '').trim()).filter(Boolean))]
+      const invalidStandIds = newStandIds.filter(id => !id.startsWith('rec'))
+      if (invalidStandIds.length > 0) {
+        return res.status(400).json({ error: 'Sélection de stands invalide.' })
+      }
+      if (newStandIds.length === 0) {
+        return res.status(400).json({ error: 'Au moins un stand doit être sélectionné.' })
+      }
+
+      const standRecords = []
+      for (const standId of newStandIds) {
+        const standRes = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${standId}`, { headers: headers() })
+        if (!standRes.ok) return res.status(404).json({ error: `Stand introuvable : ${standId}` })
+        const standRecord = await standRes.json()
+        standRecords.push(standRecord)
+        notificationStandLabels.push(standRecord.fields?.['ID Stand'] || standRecord.fields?.['Numéro stand'] || standRecord.id)
+      }
+
       const toFree = currentStandIds.filter(id => !newStandIds.includes(id))
       const toReserve = newStandIds.filter(id => !currentStandIds.includes(id))
-
-      for (const id of toFree) {
-        try {
-          await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${id}`, {
-            method: 'PATCH',
-            headers: headers(),
-            body: JSON.stringify({ fields: { 'Statut': 'Disponible' } }),
-          })
-        } catch(e) { console.warn(`[update] free stand ${id}:`, e.message) }
+      const unavailable = standRecords
+        .filter(record => toReserve.includes(record.id))
+        .filter(record => {
+          const statut = String(record.fields?.['Statut'] || '').trim()
+          return statut && statut !== 'Disponible'
+        })
+        .map(record => record.fields?.['ID Stand'] || record.fields?.['Numéro stand'] || record.id)
+      if (unavailable.length > 0) {
+        return res.status(409).json({
+          error: 'Certains stands ne sont plus disponibles.',
+          message: `Stand(s) indisponible(s) : ${unavailable.join(', ')}`,
+        })
       }
 
-      for (const id of toReserve) {
-        try {
-          await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${id}`, {
-            method: 'PATCH',
-            headers: headers(),
-            body: JSON.stringify({ fields: { 'Statut': 'Réservé' } }),
-          })
-        } catch(e) { console.warn(`[update] reserve stand ${id}:`, e.message) }
+      const restrictedStands = standRecords.filter(record => isRestrictedStandSurface(record.fields || {}))
+      if (restrictedStands.length === 1) {
+        return res.status(400).json({
+          error: `Les stands de ${RESTRICTED_STAND_SURFACE_M2} m² doivent être réservés par ${MIN_RESTRICTED_STANDS} minimum.`,
+          message: `Sélection actuelle : ${restrictedStands.map(record => record.fields?.['ID Stand'] || record.fields?.['Numéro stand'] || record.id).join(', ')}. Ajoutez au moins un autre stand de ${RESTRICTED_STAND_SURFACE_M2} m².`,
+        })
       }
+
+      cmdFields['Stand ou service commandé'] = newStandIds
+      standsToFree = toFree
+      standsToReserve = toReserve
+      requiresValidation = true
+      notificationChanges.push('Stands')
     }
 
-    res.json({ success: true, message: 'Informations mises à jour.' })
+    if (requiresValidation) {
+      cmdFields['Validation'] = 'A Valider'
+      cmdFields['Statut commande'] = 'En attente validation'
+    }
+
+    if (Object.keys(cmdFields).length > 0) {
+      await atPatchRecord('Commandes', cmd.id, cmdFields)
+    }
+
+    for (const id of standsToFree) {
+      try {
+        await atPatchRecord('Stands', id, { 'Statut': 'Disponible' })
+      } catch(e) { console.warn(`[update] free stand ${id}:`, e.message) }
+    }
+
+    for (const id of standsToReserve) {
+      try {
+        await atPatchRecord('Stands', id, { 'Statut': 'Réservé' })
+      } catch(e) { console.warn(`[update] reserve stand ${id}:`, e.message) }
+    }
+
+    const notification = requiresValidation
+      ? await notifyExposantDossierUpdate({
+          cmd,
+          socId,
+          socFields: updatedSocFields,
+          changes: notificationChanges,
+          standLabels: notificationStandLabels,
+          demandeModification: demandeModificationText,
+        })
+      : { sent: false }
+
+    res.json({ success: true, message: 'Informations mises à jour.', notification })
   } catch(e) {
     console.error('[update] error:', e.message)
     res.status(500).json({ error: DEBUG ? e.message : 'Erreur lors de la mise à jour' })
@@ -3707,17 +4067,40 @@ app.get('/api/exposant/:token/download-dossier', async (req, res) => {
     const cmd = cmds[0]
     const cf  = cmd.fields
 
-    // Société + Édition en parallèle
+    // Société + Salon en parallèle
     const societeId = (cf['Societé'] || cf['Société'] || [])[0]
-    const editionId = (cf['Édition'] || cf['Edition'] || [])[0]
+    let salonId = linkedRecordId(cf['Salons'] || cf['Salon'] || cf['Édition'] || cf['Edition'])
+    if (!salonId) {
+      for (const standId of invoiceLinkedIds(cf['Stand ou service commandé'] || cf['Stand'])) {
+        try {
+          const standData = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${standId}`, { headers: headers() }).then(r => r.ok ? r.json() : null)
+          const standFields = standData?.fields || {}
+          salonId = linkedRecordId(
+            standFields['Edition'] ||
+            standFields['Édition'] ||
+            standFields['Editions'] ||
+            standFields['Éditions'] ||
+            standFields['Salon'] ||
+            standFields['Salons']
+          )
+          if (salonId) break
+        } catch (e) {
+          console.warn('[download-dossier] résolution salon via stand:', e.message)
+        }
+      }
+    }
     if (!societeId) return res.status(404).json({ error: 'Société introuvable.' })
 
     const [socData, edData] = await Promise.all([
       fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${societeId}`, { headers: headers() }).then(r => r.json()),
-      editionId ? fetch(`${ATBASE}/${encodeURIComponent('Éditions')}/${editionId}`, { headers: headers() }).then(r => r.json()) : Promise.resolve(null),
+      salonId ? fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${salonId}`, { headers: headers() }).then(r => r.ok ? r.json() : null) : Promise.resolve(null),
     ])
     const sf = socData.fields || {}
     const ef = edData?.fields  || {}
+    const salonLabel = [
+      ef['Nom du salon'] || ef['Nom'] || ef['Name'] || ef['ID Salon'] || '',
+      ef['Edition'] || ef['Édition'] || ef['Nom édition'] || '',
+    ].filter(Boolean).join(' - ')
 
     // Stands depuis la première commande
     const commandeId = cmd.id
@@ -3742,10 +4125,10 @@ app.get('/api/exposant/:token/download-dossier', async (req, res) => {
 
     const pdfBuffer = await generateInscriptionPDF({
       numDossier:       cf['Numero de dossier'] || cf['ID Commande'] || cmd.id.slice(-8).toUpperCase(),
-      salonLabel:       ef['Nom édition']  || ef['Année']     || '',
-      salonLieu:        ef['Lieu']                            || '',
-      salonDateDebut:   ef['Date début']                      || '',
-      salonDateFin:     ef['Date fin']                        || '',
+      salonLabel,
+      salonLieu:        ef['Lieu'] || ef['Ville'] || '',
+      salonDateDebut:   ef['Date début'] || ef['Date de début'] || '',
+      salonDateFin:     ef['Date fin'] || ef['Date de fin'] || '',
       nomSociete:       sf['Raison sociale']                  || '',
       nomParticipation: cf['Nom de participation (from Societé)'] || '',
       typeEntite:       sf["Type d'entité"]                   || '',
@@ -3774,6 +4157,29 @@ app.get('/api/exposant/:token/download-dossier', async (req, res) => {
   } catch(e) {
     console.error('[download-dossier]', e.message)
     res.status(500).json({ error: 'Erreur lors de la génération du dossier.' })
+  }
+})
+
+// GET /api/exposant/:token/download-invoice — facture PDF exposant
+app.get('/api/exposant/:token/download-invoice', async (req, res) => {
+  const cmd = req.exposantCommand || await findCommandeByAccessToken(req.params.token)
+  if (!cmd) return res.status(404).json({ error: 'Dossier introuvable. Vérifiez votre lien d’accès.' })
+  await sendInvoicePdfByCommandId(cmd.id, res)
+})
+
+// GET /api/exposant/:token/download-proforma-contract — facture proforma + contrat CGV exposant
+app.get('/api/exposant/:token/download-proforma-contract', async (req, res) => {
+  try {
+    const cmd = req.exposantCommand || await findCommandeByAccessToken(req.params.token)
+    if (!cmd) return res.status(404).json({ error: 'Dossier introuvable. Vérifiez votre lien d’accès.' })
+
+    const { attachment } = await buildProformaContractAttachment(cmd.id)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${attachment.filename}"`)
+    res.send(attachment.content)
+  } catch (e) {
+    console.error('[download-proforma-contract]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur génération proforma' })
   }
 })
 
@@ -4296,8 +4702,14 @@ async function getCommercialSocietes(commercialId) {
 }
 
 function linkedRecordId(value) {
-  if (Array.isArray(value) && value[0]?.startsWith('rec')) return value[0]
-  if (typeof value === 'string' && value.startsWith('rec')) return value
+  const values = Array.isArray(value) ? value : (value ? [value] : [])
+  for (const item of values) {
+    const id = typeof item === 'string'
+      ? item
+      : (item?.id || item?.recordId || item?.airtableId || '')
+    const cleanId = String(id || '').trim()
+    if (cleanId.startsWith('rec')) return cleanId
+  }
   return null
 }
 
@@ -4405,7 +4817,10 @@ function invoiceText(...values) {
 
 function invoiceLinkedIds(value) {
   const values = Array.isArray(value) ? value : (value ? [value] : [])
-  return values.map(v => String(v || '')).filter(v => v.startsWith('rec'))
+  return values
+    .map(v => typeof v === 'string' ? v : (v?.id || v?.recordId || v?.airtableId || ''))
+    .map(v => String(v || '').trim())
+    .filter(v => v.startsWith('rec'))
 }
 
 function invoicePickMoney(fields, names, fallback = 0) {
@@ -4432,6 +4847,10 @@ function invoiceFormatMoney(value) {
   return `${fmtMoneyRaw(value)} Ar`
 }
 
+function invoiceFormatMoneyBare(value) {
+  return fmtMoneyRaw(value)
+}
+
 function invoiceFormatDate(value) {
   const text = invoiceText(value)
   if (!text) return '—'
@@ -4440,12 +4859,75 @@ function invoiceFormatDate(value) {
   return date.toLocaleDateString('fr-FR')
 }
 
+function invoiceNumberToFrench(value) {
+  const n = Math.max(0, Math.round(Number(value || 0)))
+  const units = ['ZERO', 'UN', 'DEUX', 'TROIS', 'QUATRE', 'CINQ', 'SIX', 'SEPT', 'HUIT', 'NEUF', 'DIX', 'ONZE', 'DOUZE', 'TREIZE', 'QUATORZE', 'QUINZE', 'SEIZE']
+  const tens = ['', '', 'VINGT', 'TRENTE', 'QUARANTE', 'CINQUANTE', 'SOIXANTE']
+
+  function underHundred(num) {
+    if (num < 17) return units[num]
+    if (num < 20) return `DIX ${units[num - 10]}`
+    if (num < 70) {
+      const t = Math.floor(num / 10)
+      const u = num % 10
+      if (u === 0) return tens[t]
+      if (u === 1) return `${tens[t]} ET UN`
+      return `${tens[t]} ${units[u]}`
+    }
+    if (num < 80) {
+      if (num === 71) return 'SOIXANTE ET ONZE'
+      return `SOIXANTE ${underHundred(num - 60)}`
+    }
+    if (num === 80) return 'QUATRE VINGTS'
+    return `QUATRE VINGT ${underHundred(num - 80)}`
+  }
+
+  function underThousand(num) {
+    if (num < 100) return underHundred(num)
+    const h = Math.floor(num / 100)
+    const r = num % 100
+    const hundred = h === 1 ? 'CENT' : `${units[h]} CENT`
+    if (!r) return h > 1 ? `${hundred}S` : hundred
+    return `${hundred} ${underHundred(r)}`
+  }
+
+  function group(num, divisor, singular, plural) {
+    const q = Math.floor(num / divisor)
+    const r = num % divisor
+    const label = q > 1 ? plural : singular
+    const prefix = q === 1 && singular === 'MILLE' ? singular : `${invoiceNumberToFrench(q)} ${label}`
+    return r ? `${prefix} ${invoiceNumberToFrench(r)}` : prefix
+  }
+
+  if (n < 1000) return underThousand(n)
+  if (n < 1000000) return group(n, 1000, 'MILLE', 'MILLE')
+  if (n < 1000000000) return group(n, 1000000, 'MILLION', 'MILLIONS')
+  return group(n, 1000000000, 'MILLIARD', 'MILLIARDS')
+}
+
+function invoiceAmountInWords(value) {
+  return `${invoiceNumberToFrench(value)} ARIARY`
+}
+
 function invoiceSafeFilename(value) {
   return String(value || 'facture')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 90) || 'facture'
+}
+
+function invoiceMadavisionLogoPath() {
+  return [
+    path.join(__dirname, '..', 'logo_madavision.png'),
+    path.join(__dirname, '..', 'madavision-react', 'assets', 'logo', 'madavision-logo.png'),
+    path.join(__dirname, 'assets', 'logo_madavision.png'),
+  ].find(p => fs.existsSync(p)) || null
+}
+
+function invoiceHeaderImagePath() {
+  const headerPath = path.join(__dirname, 'assets', 'entete.png')
+  return fs.existsSync(headerPath) ? headerPath : null
 }
 
 async function invoiceFetchRecord(table, id) {
@@ -4461,9 +4943,9 @@ async function resolveEditionAndSalon(editionId, directSalonId = null) {
   const salonData = await invoiceFetchRecord('Salons', idToFetch)
   const f = salonData?.fields || {}
 
-  return { 
-    edition: { id: idToFetch, nom: f['Edition'] || f['Nom du salon'] },
-    evenement: { id: idToFetch, nom: f['Nom du salon'], lieu: f['Lieu'] }
+  return {
+    edition: { id: idToFetch, nom: f['Edition'] || f['Édition'] || f['Nom édition'] || '' },
+    evenement: { id: idToFetch, nom: f['Nom du salon'] || f['Nom'] || f['Name'] || f['ID Salon'] || '', lieu: f['Lieu'] }
   }
 }
 
@@ -4569,7 +5051,7 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
     }
   }
 
-  let editionId = invoiceLinkedIds(cf['Édition'] || cf['Edition'] || cf['Societé'])[0]
+  let editionId = invoiceLinkedIds(cf['Édition'] || cf['Edition'] || cf['Salons'] || cf['Salon'])[0]
   let salonRecord = await invoiceFetchRecord('Salons', editionId)
   let salonFields = salonRecord?.fields || {}
   let ef = salonFields
@@ -4657,11 +5139,11 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
       logoUrl: sf['Logo']?.[0]?.url || '',
     },
     evenement: {
-      nom: invoiceText(salonFields['Nom du salon'], salonFields['Nom'], salonFields['Name'], salonFields['ID Salon']),
+      nom: invoiceText(salonFields['Nom du salon'], salonFields['Nom'], salonFields['Name'], salonFields['ID Salon'], salonFields['Edition'], salonFields['Édition']),
       lieu: invoiceText(salonFields['Lieu'], salonFields['Ville'], ef['Lieu']),
     },
     edition: {
-      nom: invoiceText(ef['Nom édition'], ef['Nom'], ef['Année'] ? `Édition ${ef['Année']}` : ''),
+      nom: invoiceText(ef['Edition'], ef['Édition'], ef['Nom édition'], ef['Nom'], ef['Année'] ? `Édition ${ef['Année']}` : ''),
       dateDebut: invoiceText(ef['Date début']),
       dateFin: invoiceText(ef['Date fin']),
     },
@@ -4683,6 +5165,7 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
       voucherAmount,
       montantTaxe,
       totalTTC,
+      netAPayer,
       montantEncaisse,
       resteAPayer,
       promoCode,
@@ -4693,332 +5176,404 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
   }
 }
 
-async function generateInvoicePDF(data) {
-  const logoExposantBuffer = await fetchImageBuffer(data.societe.logoUrl)
+function renderInvoiceTemplate(doc, data, options = {}) {
+    registerFonts(doc)
+    const BLUE = '#3766A8'
+    const DARK = '#17345F'
+    const TEXT = '#111111'
+    const MUTED = '#687e7e'
+    const LINE = '#D8DEE8'
+    const RED = '#FF3030'
+    const pageW = 595.28
+    const pageH = 841.89
+    const marginX = 37
+    const tableX = 37
+    const tableW = 522
+    const colDesignation = 190
+    const colQty = 100
+    const colUnit = 120
+    const colAmount = tableW - colDesignation - colQty - colUnit
+    const logoPath = invoiceMadavisionLogoPath()
+    const headerImagePath = invoiceHeaderImagePath()
+    const invoiceNo = invoiceText(data.dossierNumber, data.invoiceNumber).replace(/^FACT-/, '') || data.invoiceNumber
+    const eventName = [...new Set([data.evenement?.nom, data.edition?.nom].map(value => invoiceText(value)).filter(Boolean))].join(' - ')
+    const normalizedStatus = invoiceText(data.statut)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+    const isPendingOrDraft = /\b(proforma|attente|pending|brouillon|draft|non valide)\b/.test(normalizedStatus)
+    const isFinalInvoice = !isPendingOrDraft && /\b(valide|confirme|paye|solde)\b/.test(normalizedStatus)
+    const documentTitle = invoiceText(options.documentTitle).toUpperCase() || (isFinalInvoice ? 'FACTURE' : 'PROFORMA')
+    const discount = invoiceMoney(data.financial.remisePromo) + invoiceMoney(data.financial.voucherAmount)
+    const totalHT = invoiceMoney(data.financial.montantHT)
+    const totalTTC = invoiceMoney(data.financial.totalTTC)
+    const netAPayer = invoiceMoney(data.financial.netAPayer) || Math.max(0, totalTTC - discount)
+    const totalHTRemise = Math.max(0, totalHT - discount)
+    const tax = invoiceMoney(data.financial.montantTaxe)
+    const paid = invoiceMoney(data.financial.resteAPayer) <= 0 || invoiceMoney(data.financial.montantEncaisse) >= netAPayer
+    let y = 0
+    let totalsBottomY = 0
 
+    function money(value) {
+      return invoiceFormatMoneyBare(value)
+    }
+
+    function drawHeader() {
+      doc.save()
+      if (headerImagePath) {
+        try {
+          doc.image(headerImagePath, 0, 0, { width: pageW })
+          doc.restore()
+          return
+        } catch (e) {
+          console.warn('[invoice] entete.png ignorée:', e.message)
+        }
+      }
+
+      doc.fillColor(BLUE)
+      doc.moveTo(0, 8).lineTo(216, 8).lineTo(229, 42).lineTo(202, 89).lineTo(0, 89).closePath().fill()
+      doc.fillColor(DARK).rect(205, 42, 390, 27).fill()
+      if (logoPath) {
+        try {
+          doc.image(logoPath, 57, 25, { width: 102 })
+        } catch (e) {
+          drawLogoText(58, 25)
+        }
+      } else {
+        drawLogoText(58, 25)
+      }
+      doc.restore()
+    }
+
+    function drawLogoText(x, yLogo) {
+      doc.fillColor(TEXT).font('Poppins-Bold').fontSize(21).text('MADA', x, yLogo, { width: 105, align: 'center' })
+      doc.fillColor(BLUE).fontSize(20).text('VISION', x, yLogo + 22, { width: 105, align: 'center' })
+    }
+
+    function drawCompanyBlocks() {
+      doc.fillColor(TEXT).font('Poppins-Bold').fontSize(11).text('FACTURÉ À', marginX, 122)
+      doc.font('Poppins-Regular').fontSize(10).text(data.societe?.nom || '—', marginX, 144, { width: 230 })
+      doc.font('Poppins-Bold').fontSize(8.5).text('NIF :', marginX, 166)
+      doc.text('STAT :', marginX, 184)
+      doc.text('Adresse :', marginX, 202)
+      doc.font('Poppins-Regular').fontSize(8.5)
+      if (data.societe?.nif) doc.text(data.societe.nif, 78, 166, { width: 190 })
+      if (data.societe?.stat) doc.text(data.societe.stat, 78, 184, { width: 190 })
+      if (data.societe?.adresse) doc.text(data.societe.adresse, 98, 202, { width: 190 })
+      doc.font('Poppins-Bold').fontSize(8.5).text('Date :', marginX, 242)
+      doc.font('Poppins-Regular').text(invoiceFormatDate(data.date), 65, 242)
+      doc.font('Poppins-Bold').text('Échéance :', marginX, 262)
+      doc.font('Poppins-Regular').text(invoiceFormatDate(data.dates?.solde || data.date), 91, 262)
+
+      doc.fillColor(BLUE).font('Poppins-Bold').fontSize(27).text(documentTitle, 366, 86, { width: 185, align: 'left' })
+      doc.fillColor(TEXT).fontSize(8.5).text(invoiceNo, 368, 124, { width: 190 })
+      doc.font('Poppins-Regular').fontSize(8.5)
+        .text('MADAGASCAR, ANTANANARIVO', 368, 144, { width: 190 })
+        .text('Société MADA VISION SARL', 368, 156, { width: 190 })
+        .text('Anosivavaka, Route du Pape, Dyve', 368, 168, { width: 190 })
+        .text('Garden, 3ème étage', 368, 180, { width: 190 })
+        .text('contact@mada-vision.com', 368, 212, { width: 190 })
+        .text('038 17 250 11', 368, 224, { width: 190 })
+      doc.font('Poppins-Bold')
+        .text('NIF: 3000649139', 368, 246, { width: 190 })
+        .text('STAT : 82300 11 2002 0 10141', 368, 258, { width: 190 })
+
+      doc.fillColor(TEXT).font('Poppins-Bold').fontSize(10).text('Description :', marginX, 298)
+      doc.font('Poppins-Regular').fontSize(9.5).text(`Participation à l’événement${eventName ? ` ${eventName}` : ''}`, 121, 298, { width: 400 })
+    }
+
+    function drawTableHeader(startY) {
+      doc.rect(tableX, startY, tableW, 34).fill(BLUE)
+      doc.fillColor('#FFFFFF').font('Poppins-Bold').fontSize(9.5)
+      doc.text('Désignation', tableX, startY + 11, { width: colDesignation, align: 'center' })
+      doc.text('Quantité', tableX + colDesignation, startY + 11, { width: colQty, align: 'center' })
+      doc.text('P.U', tableX + colDesignation + colQty, startY + 11, { width: colUnit, align: 'center' })
+      doc.text('Montant', tableX + colDesignation + colQty + colUnit, startY + 11, { width: colAmount, align: 'center' })
+      y = startY + 34
+    }
+
+    function drawLineItem(item) {
+      const qty = Number(item.qty) || 1
+      const total = invoiceMoney(item.amount) * qty
+      const label = [item.label, item.description].filter(Boolean).join(' - ')
+      if (y > 520) {
+        drawFooter()
+        doc.addPage()
+        drawHeader()
+        drawTableHeader(120)
+      }
+      const rowHeight = Math.max(33, doc.heightOfString(label || '—', { width: colDesignation - 18 }) + 18)
+      doc.fillColor(TEXT).font('Poppins-Regular').fontSize(7.5)
+      doc.text(label || '—', tableX + 8, y + 11, { width: colDesignation - 18 })
+      doc.text(String(qty), tableX + colDesignation, y + 11, { width: colQty, align: 'center' })
+      doc.text(money(item.amount), tableX + colDesignation + colQty, y + 11, { width: colUnit, align: 'center' })
+      doc.text(money(total), tableX + colDesignation + colQty + colUnit, y + 11, { width: colAmount - 8, align: 'right' })
+      y += rowHeight
+      doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor(LINE).lineWidth(0.5).stroke()
+    }
+
+    function drawTotals() {
+      const totalRowY = y
+      doc.fillColor(TEXT).font('Poppins-Regular').fontSize(8)
+      doc.text('TOTAL (HT)', tableX + colDesignation, totalRowY + 11, { width: colQty + colUnit, align: 'center' })
+      doc.text(money(totalHT || totalTTC), tableX + colDesignation + colQty + colUnit, totalRowY + 11, { width: colAmount - 8, align: 'right' })
+      y += 33
+      doc.moveTo(tableX, y).lineTo(tableX + tableW, y).strokeColor(LINE).lineWidth(0.5).stroke()
+
+      const labelX = 362
+      const valueX = 468
+      y += 4
+      function summary(label, value, bold = false) {
+        doc.fillColor(TEXT).font(bold ? 'Poppins-Bold' : 'Poppins-Regular').fontSize(8)
+        doc.text(label, labelX, y + 7, { width: 92, align: 'center' })
+        doc.font('Poppins-Regular').text(money(value), valueX, y + 7, { width: 86, align: 'right' })
+        y += 33
+        doc.moveTo(labelX - 16, y).lineTo(tableX + tableW, y).strokeColor(LINE).lineWidth(0.5).stroke()
+      }
+      if (discount > 0) summary('REMISE', discount, true)
+      summary('Total (HT)\navec REMISE', discount > 0 ? totalHTRemise : totalHT, true)
+      summary('TVA', tax, true)
+      summary('MONTANT', netAPayer, true)
+      totalsBottomY = y
+    }
+
+    function drawPaidStamp() {
+      if (!paid) return
+      doc.save()
+      doc.rotate(-45, { origin: [140, 504] })
+      doc.fillColor(RED).font('Poppins-Bold').fontSize(43).text('Payé', 76, 486, { width: 140, align: 'center' })
+      doc.restore()
+    }
+
+    function drawPaymentAndSignature() {
+      const amountWords = invoiceAmountInWords(netAPayer)
+      // let amountLineY = Math.max(612, totalsBottomY + 26)
+      // if (amountLineY > 630) {
+      //   drawFooter()
+      //   doc.addPage()
+      //   drawHeader()
+      //   amountLineY = 150
+      // }
+      let amountLineY = Math.max(580, totalsBottomY + 15)
+      if (amountLineY > 690) {
+        drawFooter()
+        doc.addPage()
+        drawHeader()
+        amountLineY = 150
+      }
+      const paymentY = amountLineY + 48
+
+      doc.fillColor(TEXT).font('Poppins-Bold').fontSize(7.5)
+        .text(`Arrêtée la présente facture à la somme de ${amountWords}.`, 63, amountLineY, { width: 470, align: 'left' })
+
+      doc.font('Poppins-Bold').fontSize(12).text('MODE DE PAIEMENT :', marginX, paymentY)
+      doc.font('Poppins-Bold').fontSize(8).text('• VIREMENT :', marginX + 2, paymentY + 22)
+      doc.font('Poppins-Regular').fontSize(8).text('00008/00006 02001009138 17', marginX + 58, paymentY + 22)
+      doc.text('(Bred Madagasikara)', marginX + 19, paymentY + 35)
+      doc.font('Poppins-Bold').text('• Mobile Money :', marginX + 2, paymentY + 53)
+      doc.font('Poppins-Regular').text('038 17 250 11', marginX + 82, paymentY + 53)
+      doc.text('(Au nom de Koloina)', marginX + 19, paymentY + 66)
+      doc.font('Poppins-Bold').text('• Chèque', marginX + 2, paymentY + 84)
+      doc.font('Poppins-Regular').text('à L’ordre de “Madavision”', marginX + 47, paymentY + 84)
+
+      doc.save()
+      doc.rotate(-3, { origin: [460, paymentY + 18] })
+      doc.opacity(0.55)
+      doc.rect(402, paymentY - 11, 116, 52).strokeColor(BLUE).lineWidth(1.8).stroke()
+      doc.fillColor(BLUE).font('Poppins-Bold').fontSize(22).text('MADA', 414, paymentY - 6, { width: 92, align: 'center' })
+      doc.fontSize(19).text('VISION', 414, paymentY + 16, { width: 92, align: 'center' })
+      doc.restore()
+      doc.fillColor(TEXT).font('Poppins-Bold').fontSize(7.5).text('Koloina RANAIVO RAJAONARISOA', 378, paymentY + 67, { width: 170, align: 'center' })
+      doc.font('Poppins-Regular').fontSize(7.5).text('Directrice Générale Adjointe', 386, paymentY + 79, { width: 155, align: 'center' })
+    }
+
+    function drawFooter() {
+      const footerY = 780
+      doc.fillColor(DARK).rect(0, 807, 595, 14).fill()
+      doc.fillColor(BLUE)
+      doc.moveTo(531, 778).lineTo(568, 778).lineTo(553, 832).lineTo(516, 832).closePath().fill()
+      doc.strokeColor(BLUE).lineWidth(3).moveTo(0, 797).lineTo(520, 797).stroke()
+      doc.fillColor(DARK).font('Poppins-Regular').fontSize(7)
+      doc.text('038 17 250 11', 52, footerY)
+      doc.text('contact@mada-vision.com', 192, footerY)
+      doc.text('www.mada-vision.com', 392, footerY)
+      doc.fillColor(BLUE).circle(40, footerY + 3, 3).fill()
+      doc.circle(180, footerY + 3, 3).fill()
+      doc.circle(380, footerY + 3, 3).fill()
+    }
+
+    drawHeader()
+    drawCompanyBlocks()
+    drawTableHeader(320)
+
+    if (!Array.isArray(data.lines) || data.lines.length === 0) {
+      drawLineItem({ label: 'Aucune réservation chiffrée', qty: 1, amount: 0 })
+    } else {
+      data.lines.forEach(drawLineItem)
+    }
+    drawTotals()
+    drawPaidStamp()
+    drawPaymentAndSignature()
+    drawFooter()
+}
+
+async function generateInvoicePDF(data) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 48, compress: true })
+    const doc = new PDFDocument({ size: 'A4', margin: 0, compress: true })
     const buffers = []
     doc.on('data', b => buffers.push(b))
     doc.on('end', () => resolve(Buffer.concat(buffers)))
     doc.on('error', reject)
 
-    registerFonts(doc)
-    const NAVY = '#0d0d0d'
-    const BLEU = '#195b98'
-    const GRAY = '#687e7e'
-    const LIGHT = '#EEF2F8'
-    const W = 499
-    let y = 48
-
-    function ensure(height = 40) {
-      if (y + height <= 780) return
-      doc.addPage()
-      y = 48
-    }
-    function section(title) {
-      ensure(34)
-      doc.rect(48, y, W, 24).fill(LIGHT)
-      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(title.toUpperCase(), 60, y + 8)
-      y += 34
-    }
-    function row(label, value, x = 60, width = 210) {
-      if (value === null || value === undefined || value === '') return
-      ensure(18)
-      doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text(label, x, y, { width })
-      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(String(value), x + width, y, { width: 547 - x - width, align: 'right' })
-      y += 16
-    }
-    function moneyRow(label, value, strong = false) {
-      ensure(18)
-      doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Poppins-Bold' : 'Poppins-Regular').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
-      doc.fillColor(strong ? BLEU : NAVY).font('Poppins-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
-      y += strong ? 18 : 15
-    }
-
-    doc.rect(48, y, W, 100).fill(BLEU)
-    doc.fillColor('#fff').font('Poppins-Bold').fontSize(18).text('MADAVISION', 64, y + 15)
-    doc.font('Poppins-Regular').fontSize(9).text('Facture de vente', 64, y + 38)
-    doc.font('Poppins-Regular').fontSize(7.5).fillColor('#E6F4F4')
-    const contactParts = []
-    contactParts.push('NIF : 3000001053 • STAT : 92391 11 1993 0 00002')
-    contactParts.push('Adresse : Enceinte Gare Soarano, Analakely, Antananarivo')
-    contactParts.push('Tel : +261 20 22 235 44 • Email : contact@madavision.mg')
-    contactParts.forEach((part, i) => {
-      doc.text(part, 64, y + 56 + i * 12)
-    })
-
-    doc.fillColor('#fff').font('Poppins-Bold').fontSize(14)
-      .text(data.societe?.nom || data.invoiceNumber, 350, y + 14, { width: 180, align: 'right' })
-    doc.font('Poppins-Regular').fontSize(8)
-      .text(`Émise le ${new Date(data.date).toLocaleDateString('fr-FR')}`, 350, y + 38, { width: 180, align: 'right' })
-    doc.font('Poppins-Bold').fontSize(8).fillColor('#E6F4F4')
-      .text(data.invoiceNumber, 350, y + 56, { width: 180, align: 'right' })
-    if (logoExposantBuffer) {
-      doc.image(logoExposantBuffer, 495, 85, { width: 40 })
-    }
-    y += 115
-
-    section('Client')
-    row('Société', data.societe.nom)
-    row('ID Entreprise', data.societe.idEntreprise)
-    row('NIF / STAT', [data.societe.nif, data.societe.stat].filter(Boolean).join(' / '))
-    row('Adresse', data.societe.adresse)
-    row('Email', data.societe.email)
-    y += 8
-
-    section('Événement')
-    row('Événement', data.evenement.nom)
-    row('Édition', data.edition.nom)
-    row('Lieu', data.evenement.lieu)
-    row('Numéro dossier', data.dossierNumber)
-    y += 8
-
-    section('Commandes & réservations')
-    ensure(28)
-    doc.fillColor(GRAY).font('Poppins-Bold').fontSize(8)
-    doc.text('Désignation', 60, y, { width: 250 })
-    doc.text('Qté', 326, y, { width: 35, align: 'right' })
-    doc.text('PU', 375, y, { width: 75, align: 'right' })
-    doc.text('Total', 462, y, { width: 85, align: 'right' })
-    y += 14
-    doc.moveTo(60, y).lineTo(547, y).strokeColor('#D9E0EA').lineWidth(0.5).stroke()
-    y += 8
-
-    if (data.lines.length === 0) {
-      row('Lignes', 'Aucune réservation chiffrée')
-    } else {
-      data.lines.forEach(item => {
-        const qty = Number(item.qty) || 1
-        const total = invoiceMoney(item.amount) * qty
-        ensure(34)
-        doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(item.label || '—', 60, y, { width: 250 })
-        if (item.description) doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7).text(item.description, 60, y + 11, { width: 250 })
-        doc.fillColor(NAVY).font('Poppins-Regular').fontSize(9).text(String(qty), 326, y, { width: 35, align: 'right' })
-        doc.text(invoiceFormatMoney(item.amount), 375, y, { width: 75, align: 'right' })
-        doc.font('Poppins-Bold').text(invoiceFormatMoney(total), 462, y, { width: 85, align: 'right' })
-        y += item.description ? 28 : 20
-      })
-    }
-
-    y += 8
-    row('Badges / Invitations / Parking VIP', `${data.access.badges || 0} / ${data.access.invitations || 0} / ${data.access.parkingVip || 0}`)
-    y += 8
-
-    section('Résumé financier')
-    moneyRow('Montant HT', data.financial.montantHT)
-    if (data.financial.remisePromo > 0) moneyRow(`Remise promo${data.financial.promoCode ? ` (${data.financial.promoCode})` : ''}`, -data.financial.remisePromo)
-    if (data.financial.voucherAmount > 0) moneyRow(`Voucher${data.financial.voucherCode ? ` (${data.financial.voucherCode})` : ''}`, -data.financial.voucherAmount)
-    moneyRow(`TVA / Taxe ${data.financial.taxLabel}`, data.financial.montantTaxe)
-    doc.moveTo(330, y + 2).lineTo(547, y + 2).strokeColor('#D9E0EA').lineWidth(0.5).stroke()
-    y += 10
-    moneyRow('Total TTC', data.financial.totalTTC, true)
-    moneyRow('Montant soldé', data.financial.montantEncaisse)
-    moneyRow('Reste à payer', data.financial.resteAPayer, true)
-
-    y = Math.max(y + 18, 735)
-    doc.moveTo(48, y).lineTo(547, y).strokeColor(BLEU).lineWidth(1).stroke()
-    y += 10
-    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7)
-      .text('Facture générée automatiquement à partir des données Airtable Commandes, Stands, Éditions, Salons et Société.', 48, y, { width: W, align: 'center' })
-
+    renderInvoiceTemplate(doc, data)
     doc.end()
   })
 }
 
 async function generateProformaContractPDF(data) {
-  const logoExposantBuffer = await fetchImageBuffer(data.societe.logoUrl)
-
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: 'A4', margin: 48, compress: true })
+    const doc = new PDFDocument({ size: 'A4', margin: 0, compress: true })
     const buffers = []
     doc.on('data', b => buffers.push(b))
     doc.on('end', () => resolve(Buffer.concat(buffers)))
     doc.on('error', reject)
 
-    registerFonts(doc)
-    const NAVY = '#0d0d0d'
-    const BLEU = '#195b98'
-    const GRAY = '#687e7e'
-    const LIGHT = '#EEF2F8'
-    const BORDER = '#D9E0EA'
-    const W = 499
-    let y = 48
+    renderInvoiceTemplate(doc, data, { documentTitle: 'PROFORMA' })
 
-    function ensure(height = 40) {
-      if (y + height <= 780) return
-      doc.addPage()
-      y = 48
-    }
-    function header(title, subtitle) {
-      doc.rect(48, y, W, 90).fill(BLEU)
-      doc.fillColor('#fff').font('Poppins-Bold').fontSize(18).text('MADAVISION', 64, y + 15)
-      doc.font('Poppins-Regular').fontSize(8).fillColor('#E6F4F4')
-      doc.text('NIF : 3000001053 • STAT : 92391 11 1993 0 00002', 64, y + 40)
-      doc.text('Enceinte Gare Soarano, Analakely, Antananarivo', 64, y + 52)
-      doc.text('contact@madavision.mg • www.madavision.mg', 64, y + 64)
-      
-      doc.fillColor('#fff').font('Poppins-Bold').fontSize(12).text(title, 335, y + 17, { width: 195, align: 'right' })
-      doc.fontSize(10).text(subtitle, 335, y + 35, { width: 195, align: 'right' })
-      doc.font('Poppins-Regular').fontSize(8).text(`Émis le ${invoiceFormatDate(data.date)}`, 335, y + 55, { width: 195, align: 'right' })
-      if (logoExposantBuffer) {
-        doc.image(logoExposantBuffer, 490, 60, { width: 40 })
-      }
-      y += 105
-    }
-    function section(title) {
-      ensure(34)
-      doc.rect(48, y, W, 24).fill(LIGHT)
-      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(title.toUpperCase(), 60, y + 8)
-      y += 34
-    }
-    function row(label, value, x = 60, labelWidth = 150) {
-      if (value === null || value === undefined || value === '') return
-      ensure(18)
-      doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text(label, x, y, { width: labelWidth })
-      doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(String(value), x + labelWidth, y, { width: 547 - x - labelWidth, align: 'right' })
-      y += 16
-    }
-    function moneyRow(label, value, strong = false) {
-      ensure(18)
-      doc.fillColor(strong ? NAVY : GRAY).font(strong ? 'Poppins-Bold' : 'Poppins-Regular').fontSize(strong ? 10 : 9).text(label, 330, y, { width: 105 })
-      doc.fillColor(strong ? BLEU : NAVY).font('Poppins-Bold').fontSize(strong ? 10 : 9).text(invoiceFormatMoney(value), 435, y, { width: 112, align: 'right' })
-      y += strong ? 18 : 15
-    }
-    function paragraph(text, options = {}) {
-      ensure(options.height || 34)
-      doc.fillColor(options.color || NAVY).font(options.font || 'Poppins-Regular').fontSize(options.size || 9)
-        .text(text, 60, y, { width: 475, lineGap: 3, align: options.align || 'left' })
-      y = doc.y + (options.gap ?? 10)
-    }
-    function bullet(text) {
-      ensure(32)
-      doc.fillColor(BLEU).font('Poppins-Bold').fontSize(11).text('•', 62, y)
-      doc.fillColor(NAVY).font('Poppins-Regular').fontSize(9).text(text, 78, y, { width: 455, lineGap: 3 })
-      y = doc.y + 8
-    }
-
-    const proformaNumber = `PROFORMA N° ${data.dossierNumber || data.invoiceNumber}`
-    const acompte = Math.round(invoiceMoney(data.financial.totalTTC) * 0.5)
-    const solde = Math.max(0, invoiceMoney(data.financial.totalTTC) - acompte)
-
-    header('FACTURE PROFORMA', proformaNumber)
-
-    section('Client & dossier')
-    row('Société', data.societe.nom)
-    row('ID Entreprise', data.societe.idEntreprise)
-    row('NIF / STAT', [data.societe.nif, data.societe.stat].filter(Boolean).join(' / '))
-    row('Email', data.societe.email)
-    row('Événement / Édition', [data.evenement.nom, data.edition.nom].filter(Boolean).join(' — '))
-    row('Numéro dossier', data.dossierNumber)
-    row('Statut', data.statut)
-    row('Date validation', invoiceFormatDate(data.dates.validation))
-    y += 8
-
-    section('Commandes & réservations')
-    ensure(28)
-    doc.fillColor(GRAY).font('Poppins-Bold').fontSize(8)
-    doc.text('Désignation', 60, y, { width: 250 })
-    doc.text('Qté', 326, y, { width: 35, align: 'right' })
-    doc.text('PU', 375, y, { width: 75, align: 'right' })
-    doc.text('Total', 462, y, { width: 85, align: 'right' })
-    y += 14
-    doc.moveTo(60, y).lineTo(547, y).strokeColor(BORDER).lineWidth(0.5).stroke()
-    y += 8
-
-    if (data.lines.length === 0) {
-      row('Lignes', 'Aucune réservation chiffrée')
-    } else {
-      data.lines.forEach(item => {
-        const qty = Number(item.qty) || 1
-        const total = invoiceMoney(item.amount) * qty
-        ensure(34)
-        doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text(item.label || '—', 60, y, { width: 250 })
-        if (item.description) doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7).text(item.description, 60, y + 11, { width: 250 })
-        doc.fillColor(NAVY).font('Poppins-Regular').fontSize(9).text(String(qty), 326, y, { width: 35, align: 'right' })
-        doc.text(invoiceFormatMoney(item.amount), 375, y, { width: 75, align: 'right' })
-        doc.font('Poppins-Bold').text(invoiceFormatMoney(total), 462, y, { width: 85, align: 'right' })
-        y += item.description ? 28 : 20
+    doc.addPage({ size: 'A4', margin: 0 })
+    const cgvPath = path.join(__dirname, 'assets', 'pdf', 'cgv.jpg')
+    if (fs.existsSync(cgvPath)) {
+      doc.image(cgvPath, 0, 0, {
+        fit: [595.28, 841.89],
+        align: 'center',
+        valign: 'center',
       })
+    } else {
+      registerFonts(doc)
+      doc.fillColor('#17345F').font('Poppins-Bold').fontSize(18)
+        .text('Conditions Générales de Vente', 48, 90, { width: 499, align: 'center' })
+      doc.fillColor('#687e7e').font('Poppins-Regular').fontSize(10)
+        .text('Le fichier CGV est introuvable dans assets/pdf/cgv.jpg.', 48, 132, { width: 499, align: 'center' })
     }
-
-    y += 8
-    row('Badges / Invitations / Parking VIP', `${data.access.badges || 0} / ${data.access.invitations || 0} / ${data.access.parkingVip || 0}`)
-    y += 8
-
-    section('Résumé financier proforma')
-    moneyRow('Montant HT', data.financial.montantHT)
-    if (data.financial.remisePromo > 0) moneyRow(`Remise promo${data.financial.promoCode ? ` (${data.financial.promoCode})` : ''}`, -data.financial.remisePromo)
-    if (data.financial.voucherAmount > 0) moneyRow(`Voucher${data.financial.voucherCode ? ` (${data.financial.voucherCode})` : ''}`, -data.financial.voucherAmount)
-    moneyRow(`TVA / Taxe ${data.financial.taxLabel}`, data.financial.montantTaxe)
-    doc.moveTo(330, y + 2).lineTo(547, y + 2).strokeColor(BORDER).lineWidth(0.5).stroke()
-    y += 10
-    moneyRow('Total TTC', data.financial.totalTTC, true)
-    moneyRow('Montant soldé', data.financial.montantEncaisse)
-    moneyRow('Reste à payer', data.financial.resteAPayer, true)
-    y += 4
-    row('Acompte 50 %', `${invoiceFormatMoney(acompte)} — échéance ${invoiceFormatDate(data.dates.acompte)}`)
-    row('Solde 50 %', `${invoiceFormatMoney(solde)} — échéance ${invoiceFormatDate(data.dates.solde)}`)
-
-    // --- RIB Madavision ---
-    y += 20
-    doc.rect(60, y, 475, 55).strokeColor(BORDER).lineWidth(0.5).stroke()
-    doc.fillColor(BLEU).font('Poppins-Bold').fontSize(8).text('MODALITÉS DE RÈGLEMENT (RIB)', 70, y + 10)
-    doc.fillColor(NAVY).font('Poppins-Regular').fontSize(7.5)
-      .text('Banque : Bred Madagasikara', 65, y + 12)
-      .text('Compte : 00008/00006 02001009138 17', 65, y + 24)
-      .text('Ordre : MADAVISION', 65, y + 36)
-      .text(`NIF : ${data.societe.nif || '—'}     STAT : ${data.societe.stat || '—'}`, 65, y + 46)
-      doc.text('Virement ou chèque à l\'ordre de "MADAVISION"', 300, y + 25, { width: 220, align: 'right' })
-    y += 75
-
-    // Mobile Money
-    doc.fillColor(BLEU).font('Poppins-Bold').fontSize(8).text('MOBILE MONEY', 300, y)
-    doc.font('Poppins-Regular').fontSize(7.5).fillColor(NAVY)
-      .text('MVOLA : 038 17 250 11', 300, y + 12)
-      .text('AIRTEL MONEY : 033 17 250 11', 300, y + 24)
-      .text('ORANGE MONEY : 032 17 250 11', 300, y + 36)
-    y += 55
-
-    doc.addPage()
-    y = 48
-    header('Contrat exposant', 'Engagement CGV')
-
-    section('Engagement contractuel')
-    paragraph(
-      `La société ${data.societe.nom || 'exposante'} confirme son inscription au dossier ${data.dossierNumber || '—'} et accepte les conditions de participation communiquées par Madavision pour ${[data.evenement.nom, data.edition.nom].filter(Boolean).join(' — ') || 'l’événement'}.`
-    )
-    bullet('L’exposant certifie que les informations administratives, fiscales, commerciales et les réservations indiquées dans ce dossier sont exactes.')
-    bullet('L’exposant s’engage à respecter les Conditions Générales de Vente, le règlement général de l’événement, les consignes techniques, les règles de sécurité et les échéances de paiement.')
-    bullet('La réservation du stand et des services associés reste conditionnée à la validation administrative du dossier et au respect du calendrier de règlement.')
-    bullet('Toute modification, annulation ou demande complémentaire doit être validée par l’administration Madavision avant application.')
-    bullet('Le présent document regroupe la facture proforma et l’engagement CGV dans un seul fichier PDF transmis à l’exposant.')
-
-    y += 8
-    section('Synthèse de paiement')
-    row('Total TTC engagé', invoiceFormatMoney(data.financial.totalTTC))
-    row('Acompte 50 %', `${invoiceFormatMoney(acompte)} — ${invoiceFormatDate(data.dates.acompte)}`)
-    row('Solde 50 %', `${invoiceFormatMoney(solde)} — ${invoiceFormatDate(data.dates.solde)}`)
-    y += 14
-
-    ensure(120)
-    const boxY = y
-    doc.rect(60, boxY, 210, 92).strokeColor(BORDER).lineWidth(0.8).stroke()
-    doc.rect(325, boxY, 210, 92).strokeColor(BORDER).lineWidth(0.8).stroke()
-    doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text('Pour l’exposant', 72, boxY + 12)
-    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text('Nom, date, signature et cachet', 72, boxY + 30)
-    doc.fillColor(NAVY).font('Poppins-Bold').fontSize(9).text('Pour Madavision', 337, boxY + 12)
-    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(8).text('Validation administrative', 337, boxY + 30)
-    doc.moveTo(72, boxY + 72).lineTo(258, boxY + 72).strokeColor(BORDER).lineWidth(0.5).stroke()
-    doc.moveTo(337, boxY + 72).lineTo(523, boxY + 72).strokeColor(BORDER).lineWidth(0.5).stroke()
-    y = boxY + 116
-
-    doc.moveTo(48, 760).lineTo(547, 760).strokeColor(BLEU).lineWidth(1).stroke()
-    doc.fillColor(GRAY).font('Poppins-Regular').fontSize(7)
-      .text('Document généré automatiquement à partir des données Airtable Commandes, Stands, Éditions, Salons et Société.', 48, 772, { width: W, align: 'center' })
 
     doc.end()
   })
+}
+
+// ── Générateur Badges + Invitations ──────────────────────
+async function generateBadgesInvitationsPDF(cmdId, options = {}) {
+  const data = await buildInvoiceData(cmdId, options)
+  const W = 595.28
+  const PAD = 42
+  const COLS = 2
+  const BADGE_W = (W - PAD * 2 - 18) / COLS
+  const BADGE_H = 158
+  const BADGE_GAP = 18
+  const ROW_GAP = 14
+  const INV_H = 170
+
+  const nbBadges = Number(data.nbBadges) || 0
+  const nbInv    = Number(data.nbInvitations) || 0
+  if (nbBadges === 0 && nbInv === 0) throw new Error('Aucun badge ni invitation à générer.')
+
+  const socNom = data.societe?.nom || 'Exposant'
+  const eventNom = [data.evenement?.nom, data.edition?.nom].filter(Boolean).join(' — ') || 'Événement Madavision'
+  const contact = data.societe?.contact || ''
+  const datePlace = [data.edition?.dateDebut, data.edition?.lieu || data.evenement?.lieu].filter(Boolean).join(' · ') || ''
+
+  let logoBuf = null
+  if (data.societe?.logoUrl) {
+    try { logoBuf = await fetchImageBuffer(data.societe.logoUrl) } catch (_) {}
+  }
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margins: { top: 0, bottom: 0, left: 0, right: 0 } })
+  const chunks = []
+  doc.on('data', c => chunks.push(c))
+  doc.on('end', () => resolve(Buffer.concat(chunks)))
+  const resolve = () => {}
+
+  doc.registerFont('Poppins-Bold', path.join(FONT_DIR, 'Poppins-Bold.ttf'))
+  doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
+
+  let y = PAD
+  let col = 0
+
+  const checkPage = (needed) => {
+    if (y + needed > 780) { doc.addPage(); y = PAD }
+  }
+
+  const drawBadge = (idx) => {
+    const x = PAD + col * (BADGE_W + BADGE_GAP)
+    checkPage(BADGE_H + ROW_GAP)
+
+    doc.roundedRect(x, y, BADGE_W, BADGE_H, 6)
+      .strokeColor('#cbd5e1').lineWidth(0.6).stroke()
+
+    doc.roundedRect(x, y, BADGE_W, 26, { tl: 6, tr: 6, bl: 0, br: 0 }).fill('#1B2A4A')
+    doc.fillColor('#fff').font('Poppins-Bold').fontSize(7)
+      .text(eventNom, x + 8, y + 8, { width: BADGE_W - 16, align: 'center' })
+
+    const logoY = y + 34
+    if (logoBuf) {
+      try {
+        const size = 46
+        doc.image(logoBuf, x + BADGE_W / 2 - size / 2, logoY, { width: size, height: size })
+      } catch (_) {}
+    }
+
+    const textStart = logoBuf ? logoY + 50 : logoY + 4
+    doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(8.5)
+      .text(socNom, x + 10, textStart, { width: BADGE_W - 20, align: 'center' })
+
+    doc.fillColor('#475569').font('Poppins-Regular').fontSize(7.5)
+      .text(contact || `Participant ${idx + 1}`, x + 10, textStart + 16, { width: BADGE_W - 20, align: 'center' })
+
+    doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
+      .text('MADAVISION', x + 10, y + BADGE_H - 18, { width: BADGE_W - 20, align: 'center' })
+
+    col++
+    if (col >= COLS) { col = 0; y += BADGE_H + ROW_GAP }
+  }
+
+  const drawInvitation = (idx) => {
+    checkPage(INV_H + 18)
+    const x = PAD
+    const iw = W - PAD * 2
+
+    doc.roundedRect(x, y, iw, INV_H, 6)
+      .strokeColor('#1B2A4A').lineWidth(0.8).stroke()
+
+    const cPad = 26
+    const cx = x + cPad
+    const cw = iw - cPad * 2
+
+    doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(16)
+      .text('INVITATION', cx, y + 24, { width: cw, align: 'center' })
+
+    doc.moveTo(cx + 40, y + 42).lineTo(cx + cw - 40, y + 42)
+      .strokeColor('#1B2A4A').lineWidth(0.4).stroke()
+
+    doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(13)
+      .text(eventNom, cx, y + 52, { width: cw, align: 'center' })
+    doc.fillColor('#334155').font('Poppins-Regular').fontSize(10)
+      .text(socNom, cx, y + 70, { width: cw, align: 'center' })
+    doc.fillColor('#64748b').font('Poppins-Regular').fontSize(9)
+      .text(datePlace || 'Événement Madavision', cx, y + 88, { width: cw, align: 'center' })
+    doc.fillColor('#475569').font('Poppins-Regular').fontSize(9.5)
+      .text('Vous êtes invité à participer à cet événement.', cx, y + 106, { width: cw, align: 'center' })
+
+    doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
+      .text(`Invitation n°${idx + 1}`, cx, y + INV_H - 22, { width: cw, align: 'right' })
+
+    y += INV_H + 18
+  }
+
+  for (let i = 0; i < nbBadges; i++) drawBadge(i)
+  if (nbBadges > 0 && nbInv > 0) y += 24
+  for (let i = 0; i < nbInv; i++) drawInvitation(i)
+
+  doc.end()
+  return { buffer: Buffer.concat(chunks), nbBadges, nbInvitations: nbInv }
 }
 
 async function buildProformaContractAttachment(cmdId, options = {}) {
@@ -5033,6 +5588,7 @@ async function buildProformaContractAttachment(cmdId, options = {}) {
     },
   }
 }
+
 
 async function sendExposantValidationConfirmation(cmdId) {
   const { data, attachment } = await buildProformaContractAttachment(cmdId)
@@ -5073,9 +5629,9 @@ async function sendExposantValidationConfirmation(cmdId) {
   }
 }
 
-async function sendInvoicePdf(req, res, options = {}) {
+async function sendInvoicePdfByCommandId(cmdId, res, options = {}) {
   try {
-    const data = await buildInvoiceData(req.params.id, options)
+    const data = await buildInvoiceData(cmdId, options)
     const pdf = await generateInvoicePDF(data)
     const filename = `${invoiceSafeFilename(data.invoiceNumber)}.pdf`
     res.setHeader('Content-Type', 'application/pdf')
@@ -5086,6 +5642,10 @@ async function sendInvoicePdf(req, res, options = {}) {
     console.error('[download-invoice]', e.message)
     res.status(status).json({ error: DEBUG ? e.message : (status === 500 ? 'Erreur génération facture' : e.message) })
   }
+}
+
+async function sendInvoicePdf(req, res, options = {}) {
+  await sendInvoicePdfByCommandId(req.params.id, res, options)
 }
 
 // POST /api/commercial/send-otp — OTP commercial basé sur la table Commerciaux
@@ -5222,9 +5782,12 @@ app.get('/api/commercial/dossiers', requireCommercial, async (req, res) => {
 
     filteredRecords.forEach(r => {
       const f = r.fields || {}
-      ;(f['Stand ou service commandé'] || []).forEach(id => { if (id?.startsWith('rec')) standIds.add(id) })
-      ;(f['Activités optionnelles'] || []).forEach(id => { if (id?.startsWith('rec')) activityIds.add(id) })
-      ;(f['Edition'] || f['Edition'] || []).forEach(id => { if (id?.startsWith('rec')) { editionIds.add(id); salonIds.add(id); } })
+      invoiceLinkedIds(f['Stand ou service commandé']).forEach(id => standIds.add(id))
+      invoiceLinkedIds(f['Activités optionnelles']).forEach(id => activityIds.add(id))
+      invoiceLinkedIds(f['Salons'] || f['Salon'] || f['Édition'] || f['Edition']).forEach(id => {
+        editionIds.add(id)
+        salonIds.add(id)
+      })
     })
 
     const standMap = {}
@@ -6038,20 +6601,17 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
     records.forEach(r => {
       const f = r.fields
       // Société liée (champ link → array de record IDs dans l'API)
-      const sIds = f['Societé'] || f['Société'] || []
-      if (Array.isArray(sIds)) sIds.forEach(id => { if (id && id.startsWith('rec')) societeIds.add(id) })
+      invoiceLinkedIds(f['Societé'] || f['Société']).forEach(id => societeIds.add(id))
 
       // Stands liés (champ link → array de record IDs)
-      const stIds = f['Stand ou service commandé'] || []
-      if (Array.isArray(stIds)) stIds.forEach(id => { if (id && id.startsWith('rec')) standIds.add(id) })
+      invoiceLinkedIds(f['Stand ou service commandé']).forEach(id => standIds.add(id))
 
       // Édition liée
-      const edIds = f['Édition'] || f['Edition'] || []
-      if (Array.isArray(edIds)) edIds.forEach(id => { 
-        if (id && id.startsWith('rec')) { editionIds.add(id); salonIds.add(id); } 
+      invoiceLinkedIds(f['Salons'] || f['Salon'] || f['Édition'] || f['Edition']).forEach(id => {
+        editionIds.add(id)
+        salonIds.add(id)
       })
-      const actIds = f['Activités optionnelles'] || []
-      if (Array.isArray(actIds)) actIds.forEach(id => { if (id && id.startsWith('rec')) activityIds.add(id) })
+      invoiceLinkedIds(f['Activités optionnelles']).forEach(id => activityIds.add(id))
     })
 
     // ── Fetch Sociétés en batch ───────────────────────────────────────
@@ -6152,8 +6712,8 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       const getSingle = field => { const v=f[field]; return Array.isArray(v)?v[0]:(v||'') }
 
       // Société — utilise le batch résolu ou lookup texte en fallback
-      const socLinkedIds = f['Societé'] || f['Société'] || []
-      const societeId    = Array.isArray(socLinkedIds) && socLinkedIds[0]?.startsWith('rec') ? socLinkedIds[0] : null
+      const socLinkedIds = invoiceLinkedIds(f['Societé'] || f['Société'])
+      const societeId    = socLinkedIds[0] || null
       const socResolved  = societeId ? societeMap[societeId] : null
 
       const societe = {
@@ -6173,25 +6733,22 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       console.log("COMMERCIAL = ", commercialNom)
 
       // Stands — batch résolu > texte CSV
-      const stLinkedIds = f['Stand ou service commandé'] || []
+      const stLinkedIds = invoiceLinkedIds(f['Stand ou service commandé'])
       let standsLabel
-      if (Array.isArray(stLinkedIds) && stLinkedIds.length > 0 && stLinkedIds[0]?.startsWith('rec')) {
+      if (stLinkedIds.length > 0) {
         // Ce sont des IDs → résoudre via batch
         standsLabel = stLinkedIds.map(id => standMap[id]?.label || id).join(', ')
       } else {
         // Ce sont déjà des noms (lookup texte)
-        standsLabel = Array.isArray(stLinkedIds) ? stLinkedIds.join(', ') : String(stLinkedIds || '—')
+        const rawStands = f['Stand ou service commandé'] || []
+        standsLabel = Array.isArray(rawStands) ? rawStands.map(v => String(v || '')).join(', ') : String(rawStands || '—')
       }
-      const standCount = Array.isArray(stLinkedIds)
-        ? stLinkedIds.filter(Boolean).length
-        : String(stLinkedIds || '').split(',').map(s => s.trim()).filter(Boolean).length
+      const standCount = stLinkedIds.length || String(f['Stand ou service commandé'] || '').split(',').map(s => s.trim()).filter(Boolean).length
 
       const participationId = Array.isArray(f['Participation']) ? f['Participation'][0] : null
-      const edLinkedIds = f['Édition'] || f['Edition'] || []
-      const fallbackStand = Array.isArray(stLinkedIds)
-        ? stLinkedIds.map(id => standMap[id]).find(Boolean)
-        : null
-      const editionId = (Array.isArray(edLinkedIds) && edLinkedIds[0]?.startsWith('rec') ? edLinkedIds[0] : null) || fallbackStand?.salonId || null
+      const edLinkedIds = invoiceLinkedIds(f['Salons'] || f['Salon'] || f['Édition'] || f['Edition'])
+      const fallbackStand = stLinkedIds.map(id => standMap[id]).find(Boolean)
+      const editionId = edLinkedIds[0] || fallbackStand?.salonId || null
       const edition = editionId ? editionMap[editionId] : null
       const salonId = editionId || fallbackStand?.salonId || null
       const evenement = salonId ? salonMap[salonId] : null
@@ -6199,8 +6756,8 @@ app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
       // RECALCUL DYNAMIQUE (formules identiques à Airtable)
       // Les prix stands/activités sont déjà TTC (taxe incluse)
       // On extrait le HT à rebours pour calculer la taxe
-      const totalHTStands = (Array.isArray(stLinkedIds) && stLinkedIds[0]?.startsWith('rec')) ? stLinkedIds.reduce((sum, id) => sum + (standMap[id]?.prix || 0), 0) : 0
-      const totalHTActs = (f['Activités optionnelles'] || []).reduce((sum, id) => sum + (activityMap[id]?.prix || 0), 0)
+      const totalHTStands = stLinkedIds.reduce((sum, id) => sum + (standMap[id]?.prix || 0), 0)
+      const totalHTActs = invoiceLinkedIds(f['Activités optionnelles']).reduce((sum, id) => sum + (activityMap[id]?.prix || 0), 0)
       const montantTTC = totalHTStands + totalHTActs
 
       const tr = societe.regimeFiscal
@@ -6809,7 +7366,7 @@ app.post('/api/sonia/assigner/:cmdId', requireSonia, async (req, res) => {
     let emailSent = false, emailNote = null
     try {
       const [commData, socData] = await Promise.all([
-        fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commercialId}`, { headers: headers() }).then(r => r.json()),
+        fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commercialId}`, { headers: headers() }).then(r => r.ok ? r.json() : { fields: {} }),
         fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, { headers: headers() }).then(r => r.json()),
       ])
       const commEmail = commData.fields?.['Email'] || commData.fields?.['Email professionnel'] || commData.fields?.['Mail'] || null
@@ -6822,7 +7379,7 @@ app.post('/api/sonia/assigner/:cmdId', requireSonia, async (req, res) => {
           commEmail,
           `Nouveau dossier assigné — ${socNom}`,
           emailHtmlCommercialAlert({
-            commNom:    commData.fields?.['Nom'] || commData.fields?.['Nom complet'] || 'Commercial',
+            commNom:    commData.fields?.['Nom'] || commData.fields?.['Prénom Nom'] || commData.fields?.['Nom complet'] || commData.fields?.['Name'] || 'Commercial',
             socNom,
             socEmail:   socData.fields?.['Email'] || '',
             socTel:     socData.fields?.['Téléphone'] || '',
@@ -6899,12 +7456,15 @@ app.post('/api/sonia/notify-exposant/:id', requireSonia, async (req, res) => {
 
     const [socData, commData] = await Promise.all([
       fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${socId}`, { headers: headers() }).then(r => r.json()),
-      commId ? fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commId}`, { headers: headers() }).then(r => r.json()) : Promise.resolve({ fields: {} }),
+      commId ? fetch(`${ATBASE}/${encodeURIComponent('Commerciaux')}/${commId}`, { headers: headers() }).then(r => r.ok ? r.json() : { fields: {} }).catch(() => ({ fields: {} })) : Promise.resolve({ fields: {} }),
     ])
 
     const socEmail = socData.fields?.['Email'] || ''
     const socNom   = socData.fields?.['Raison sociale'] || socData.fields?.['Nom'] || 'votre société'
-    const commNom  = commData.fields?.['Nom'] || commData.fields?.['Nom'] || 'votre commercial'
+    const commNom  = commData.fields?.['Nom'] || commData.fields?.['Nom complet'] || commData.fields?.['Prénom Nom'] || commData.fields?.['Name'] || 'votre commercial'
+    const commEmail = commData.fields?.['Email'] || commData.fields?.['Email professionnel'] || ''
+    const commTel   = commData.fields?.['Téléphone'] || ''
+    const numDossier = cmdFields['Numero de dossier'] || cmdFields['ID Commande'] || id.slice(-8).toUpperCase()
 
     if (!socEmail) return res.status(400).json({ error: 'Aucune adresse email pour le client exposant' })
 
@@ -6916,8 +7476,11 @@ app.post('/api/sonia/notify-exposant/:id', requireSonia, async (req, res) => {
         <p>Bonjour,</p>
         <p>Nous vous informons qu'un commercial a été assigné à votre dossier d'inscription pour la FIM 2026.</p>
         <div style="background:#EEF2F8;border-left:3px solid #2260A7;padding:14px 18px;border-radius:0 8px 8px 0;margin:18px 0">
-          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2260A7;margin-bottom:8px">Votre commercial</div>
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#2260A7;margin-bottom:8px">Commercial assigné à votre dossier</div>
           <div style="font-size:16px;font-weight:700;color:#1B2A4A">${escapeHtml(commNom)}</div>
+          ${commEmail ? `<div style="font-size:13px;color:#374151;margin-top:4px">📧 ${escapeHtml(commEmail)}</div>` : ''}
+          ${commTel ? `<div style="font-size:13px;color:#374151;margin-top:2px">📞 ${escapeHtml(commTel)}</div>` : ''}
+          <div style="font-size:12px;color:#5C5649;margin-top:6px">Dossier : <strong>${escapeHtml(numDossier)}</strong></div>
         </div>
         <p style="font-size:13px;color:#5C5649">
           Il/elle va prendre contact avec vous pour vous accompagner dans les étapes suivantes :<br/>

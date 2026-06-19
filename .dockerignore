@@ -1,0 +1,16 @@
+# Fichiers et dossiers exclus du contexte Docker du backend
+node_modules/
+npm-debug.log
+dist/
+.git/
+.gitignore
+.env
+.env.*
+README.md
+*.md
+.vscode/
+.idea/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+uploads/
