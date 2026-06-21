@@ -949,6 +949,12 @@ function standSurfaceM2(fields = {}) {
   )
 }
 
+// Nombre de badges estimé à partir de la surface totale du stand (9 m² = 1 badge, min 2)
+function badgesFromStandSurface(totalM2) {
+  if (!totalM2 || totalM2 <= 0) return 2
+  return Math.max(2, Math.ceil(totalM2 / 9))
+}
+
 function isRestrictedStandSurface(fields = {}) {
   return Math.abs(standSurfaceM2(fields) - RESTRICTED_STAND_SURFACE_M2) <= 0.5
 }
@@ -1053,7 +1059,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: genericError })
     }
     if (!user.passwordHash) {
-      return res.status(403).json({ error: 'Mot de passe non initialisé. Utilisez “mot de passe oublié”.' })
+      return res.status(403).json({ error: 'Mot de passe non initialisé. Utilisez "mot de passe oublié".' })
     }
     if (!verifyPassword(password, user.passwordHash)) {
       return res.status(401).json({ error: genericError })
@@ -2513,6 +2519,7 @@ app.get('/api/exposant/:token', async (req, res) => {
     }
 
     // 6. Normalisation de la commande pour le frontend
+    const totalSurfaceM2 = stands.reduce((sum, s) => sum + parseStandSurfaceM2(s.surface), 0)
     const commandeData = {
       id:              cmd.id,
       idCommande:      cf['Numero de dossier'] || cf['ID Commande'] || cmd.id.slice(-8).toUpperCase(),
@@ -2530,6 +2537,10 @@ app.get('/api/exposant/:token', async (req, res) => {
       documentsFinanciers: cf['Documents financiers'] || [],
       stands:          standLabels.join(', '),
       standItems:      stands,
+      nbBadges:        Number(cf['Nombre badges']) || 0,
+      nbInvitations:   Number(cf['Nombre invitations']) || 0,
+      surfaceTotaleM2: totalSurfaceM2,
+      badgesEstimes:   badgesFromStandSurface(totalSurfaceM2),
     }
 
     // 7. Paiements
@@ -3392,7 +3403,7 @@ function buildExposantDocuments({ token, cmd, documentsFinanciers = [] }) {
       reference: dossierNumber,
       date: match[1] || '',
       status: 'Déposé',
-      description: 'Bon de Commande transmis à l’administration Madavision.',
+      description: "Bon de Commande transmis à l'administration Madavision.",
       downloadUrl: `/exposant/${cleanToken}/download-bc/${encodeURIComponent(filename)}`,
     })
   })
@@ -3406,7 +3417,7 @@ async function requireExposantTokenAccess(req, res, next) {
     if (auth.role !== 'exposant') return res.status(403).json({ error: 'Accès exposant requis.' })
 
     const cmd = await findCommandeByAccessToken(req.params.token)
-    if (!cmd) return res.status(404).json({ error: 'Dossier introuvable. Vérifiez votre lien d’accès.' })
+    if (!cmd) return res.status(404).json({ error: "Dossier introuvable. Vérifiez votre lien d'accès." })
 
     const cf = cmd.fields || {}
     const societeId = (cf['Societé'] || cf['Société'] || [])[0]
@@ -3467,13 +3478,16 @@ app.get('/api/espace-client', requireExposant, async (req, res) => {
           if (!cResp.ok) continue
           const cf = (await cResp.json()).fields || {}
 
-          // ── Édition ──
+          // ── Édition ── (table Salons, champ "Edition")
           const edId = (cf['Édition'] || cf['Edition'] || [])[0]
-          let edition = { nom: 'FIM 2026', id: edId }
+          let edition = { nom: '', id: edId }
           if (edId) {
             try {
-              const er = await fetch(`${ATBASE}/${encodeURIComponent('Éditions')}/${edId}`, { headers: headers() })
-              if (er.ok) { const ef = (await er.json()).fields; edition.nom = ef['Nom édition'] || ef['Nom'] || edition.nom }
+              const er = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${edId}`, { headers: headers() })
+              if (er.ok) {
+                const ef = (await er.json()).fields
+                edition.nom = ef['Edition'] || ef['Édition'] || ef['Nom édition'] || ef['Nom du salon'] || ef['Nom'] || ''
+              }
             } catch {}
           }
 
@@ -4164,7 +4178,7 @@ app.get('/api/exposant/:token/download-dossier', async (req, res) => {
 // GET /api/exposant/:token/download-invoice — facture PDF exposant
 app.get('/api/exposant/:token/download-invoice', async (req, res) => {
   const cmd = req.exposantCommand || await findCommandeByAccessToken(req.params.token)
-  if (!cmd) return res.status(404).json({ error: 'Dossier introuvable. Vérifiez votre lien d’accès.' })
+  if (!cmd) return res.status(404).json({ error: "Dossier introuvable. Vérifiez votre lien d'accès." })
   await sendInvoicePdfByCommandId(cmd.id, res)
 })
 
@@ -4172,7 +4186,7 @@ app.get('/api/exposant/:token/download-invoice', async (req, res) => {
 app.get('/api/exposant/:token/download-proforma-contract', async (req, res) => {
   try {
     const cmd = req.exposantCommand || await findCommandeByAccessToken(req.params.token)
-    if (!cmd) return res.status(404).json({ error: 'Dossier introuvable. Vérifiez votre lien d’accès.' })
+    if (!cmd) return res.status(404).json({ error: "Dossier introuvable. Vérifiez votre lien d'accès." })
 
     const { attachment } = await buildProformaContractAttachment(cmd.id)
     res.setHeader('Content-Type', 'application/pdf')
@@ -4181,6 +4195,31 @@ app.get('/api/exposant/:token/download-proforma-contract', async (req, res) => {
   } catch (e) {
     console.error('[download-proforma-contract]', e.message)
     res.status(500).json({ error: DEBUG ? e.message : 'Erreur génération proforma' })
+  }
+})
+
+// GET /api/exposant/:token/download-badges — badges + invitations exposant (dossier soldé requis)
+app.get('/api/exposant/:token/download-badges', async (req, res) => {
+  try {
+    const cmd = await findCommandeByAccessToken(req.params.token)
+    if (!cmd) return res.status(404).json({ error: 'Dossier introuvable. Vérifiez votre lien d\'accès.' })
+
+    const cf = cmd.fields || {}
+    const nbBadges     = Number(cf['Nombre badges']) || 0
+    const nbInvitations = Number(cf['Nombre invitations']) || 0
+    if (nbBadges === 0 && nbInvitations === 0) {
+      return res.status(400).json({ error: 'Aucun badge ni invitation n\'a encore été configuré pour votre dossier.' })
+    }
+
+    const result = await generateBadgesInvitationsPDF(cmd.id, { nbBadges, nbInvitations })
+    const numDossier = cf['Numero de dossier'] || cmd.id.slice(-8).toUpperCase()
+    const filename = `badges-invitations-${numDossier}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(result.buffer)
+  } catch(e) {
+    console.error('[exposant/download-badges]', e.message)
+    res.status(400).json({ error: e.message })
   }
 })
 
@@ -5046,7 +5085,7 @@ async function buildInvoiceData(cmdId, { commercialId } = {}) {
   if (commercialId) {
     const commIds = invoiceLinkedIds(sf['Commerciaux'])
     if (!commIds.includes(commercialId)) {
-      const err = new Error('Ce dossier n’est pas assigné à ce commercial.')
+      const err = new Error("Ce dossier n'est pas assigné à ce commercial.")
       err.statusCode = 403
       throw err
     }
@@ -5280,7 +5319,7 @@ function renderInvoiceTemplate(doc, data, options = {}) {
         .text('STAT : 82300 11 2002 0 10141', 368, 258, { width: 190 })
 
       doc.fillColor(TEXT).font('Poppins-Bold').fontSize(10).text('Description :', marginX, 298)
-      doc.font('Poppins-Regular').fontSize(9.5).text(`Participation à l’événement${eventName ? ` ${eventName}` : ''}`, 121, 298, { width: 400 })
+      doc.font('Poppins-Regular').fontSize(9.5).text(`Participation à l'événement${eventName ? ` ${eventName}` : ''}`, 121, 298, { width: 400 })
     }
 
     function drawTableHeader(startY) {
@@ -5375,7 +5414,7 @@ function renderInvoiceTemplate(doc, data, options = {}) {
       doc.font('Poppins-Regular').text('038 17 250 11', marginX + 82, paymentY + 53)
       doc.text('(Au nom de Koloina)', marginX + 19, paymentY + 66)
       doc.font('Poppins-Bold').text('• Chèque', marginX + 2, paymentY + 84)
-      doc.font('Poppins-Regular').text('à L’ordre de “Madavision”', marginX + 47, paymentY + 84)
+      doc.font('Poppins-Regular').text("à L'ordre de \"Madavision\"", marginX + 47, paymentY + 84)
 
       doc.save()
       doc.rotate(-3, { origin: [460, paymentY + 18] })
@@ -5464,22 +5503,15 @@ async function generateProformaContractPDF(data) {
 // ── Générateur Badges + Invitations ──────────────────────
 async function generateBadgesInvitationsPDF(cmdId, options = {}) {
   const data = await buildInvoiceData(cmdId, options)
-  const W = 595.28
-  const PAD = 42
-  const COLS = 2
-  const BADGE_W = (W - PAD * 2 - 18) / COLS
-  const BADGE_H = 158
-  const BADGE_GAP = 18
-  const ROW_GAP = 14
-  const INV_H = 170
 
-  const nbBadges = Number(data.nbBadges) || 0
-  const nbInv    = Number(data.nbInvitations) || 0
+  // options.nbBadges / options.nbInvitations permettent de bypasser la relecture Airtable
+  const nbBadges = options.nbBadges !== undefined ? Number(options.nbBadges) : (Number(data.access?.badges) || 0)
+  const nbInv    = options.nbInvitations !== undefined ? Number(options.nbInvitations) : (Number(data.access?.invitations) || 0)
   if (nbBadges === 0 && nbInv === 0) throw new Error('Aucun badge ni invitation à générer.')
 
-  const socNom = data.societe?.nom || 'Exposant'
+  const socNom   = data.societe?.nom || 'Exposant'
   const eventNom = [data.evenement?.nom, data.edition?.nom].filter(Boolean).join(' — ') || 'Événement Madavision'
-  const contact = data.societe?.contact || ''
+  const contact  = data.societe?.contact || ''
   const datePlace = [data.edition?.dateDebut, data.edition?.lieu || data.evenement?.lieu].filter(Boolean).join(' · ') || ''
 
   let logoBuf = null
@@ -5487,94 +5519,104 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
     try { logoBuf = await fetchImageBuffer(data.societe.logoUrl) } catch (_) {}
   }
 
-  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margins: { top: 0, bottom: 0, left: 0, right: 0 } })
-  const chunks = []
-  doc.on('data', c => chunks.push(c))
-  doc.on('end', () => resolve(Buffer.concat(chunks)))
-  const resolve = () => {}
+  return new Promise((resolve, reject) => {
+    const W = 595.28
+    const PAD = 42
+    const COLS = 2
+    const BADGE_W = (W - PAD * 2 - 18) / COLS
+    const BADGE_H = 158
+    const BADGE_GAP = 18
+    const ROW_GAP = 14
+    const INV_H = 170
 
-  doc.registerFont('Poppins-Bold', path.join(FONT_DIR, 'Poppins-Bold.ttf'))
-  doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
+    const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margins: { top: 0, bottom: 0, left: 0, right: 0 } })
+    const chunks = []
+    doc.on('data', c => chunks.push(c))
+    doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), nbBadges, nbInvitations: nbInv }))
+    doc.on('error', reject)
 
-  let y = PAD
-  let col = 0
+    doc.registerFont('Poppins-Bold', path.join(FONT_DIR, 'Poppins-Bold.ttf'))
+    doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
 
-  const checkPage = (needed) => {
-    if (y + needed > 780) { doc.addPage(); y = PAD }
-  }
+    let y = PAD
+    let col = 0
 
-  const drawBadge = (idx) => {
-    const x = PAD + col * (BADGE_W + BADGE_GAP)
-    checkPage(BADGE_H + ROW_GAP)
-
-    doc.roundedRect(x, y, BADGE_W, BADGE_H, 6)
-      .strokeColor('#cbd5e1').lineWidth(0.6).stroke()
-
-    doc.roundedRect(x, y, BADGE_W, 26, { tl: 6, tr: 6, bl: 0, br: 0 }).fill('#1B2A4A')
-    doc.fillColor('#fff').font('Poppins-Bold').fontSize(7)
-      .text(eventNom, x + 8, y + 8, { width: BADGE_W - 16, align: 'center' })
-
-    const logoY = y + 34
-    if (logoBuf) {
-      try {
-        const size = 46
-        doc.image(logoBuf, x + BADGE_W / 2 - size / 2, logoY, { width: size, height: size })
-      } catch (_) {}
+    const checkPage = (needed) => {
+      if (y + needed > 780) { doc.addPage(); y = PAD; col = 0 }
     }
 
-    const textStart = logoBuf ? logoY + 50 : logoY + 4
-    doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(8.5)
-      .text(socNom, x + 10, textStart, { width: BADGE_W - 20, align: 'center' })
+    const drawBadge = (idx) => {
+      const x = PAD + col * (BADGE_W + BADGE_GAP)
+      checkPage(BADGE_H + ROW_GAP)
 
-    doc.fillColor('#475569').font('Poppins-Regular').fontSize(7.5)
-      .text(contact || `Participant ${idx + 1}`, x + 10, textStart + 16, { width: BADGE_W - 20, align: 'center' })
+      doc.roundedRect(x, y, BADGE_W, BADGE_H, 6)
+        .strokeColor('#cbd5e1').lineWidth(0.6).stroke()
 
-    doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
-      .text('MADAVISION', x + 10, y + BADGE_H - 18, { width: BADGE_W - 20, align: 'center' })
+      doc.rect(x, y, BADGE_W, 26).fill('#1B2A4A')
+      doc.fillColor('#fff').font('Poppins-Bold').fontSize(7)
+        .text(eventNom, x + 8, y + 8, { width: BADGE_W - 16, align: 'center' })
 
-    col++
-    if (col >= COLS) { col = 0; y += BADGE_H + ROW_GAP }
-  }
+      const logoY = y + 34
+      if (logoBuf) {
+        try {
+          const size = 46
+          doc.image(logoBuf, x + BADGE_W / 2 - size / 2, logoY, { width: size, height: size })
+        } catch (_) {}
+      }
 
-  const drawInvitation = (idx) => {
-    checkPage(INV_H + 18)
-    const x = PAD
-    const iw = W - PAD * 2
+      const textStart = logoBuf ? logoY + 50 : logoY + 4
+      doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(8.5)
+        .text(socNom, x + 10, textStart, { width: BADGE_W - 20, align: 'center' })
 
-    doc.roundedRect(x, y, iw, INV_H, 6)
-      .strokeColor('#1B2A4A').lineWidth(0.8).stroke()
+      doc.fillColor('#475569').font('Poppins-Regular').fontSize(7.5)
+        .text(contact || `Participant ${idx + 1}`, x + 10, textStart + 16, { width: BADGE_W - 20, align: 'center' })
 
-    const cPad = 26
-    const cx = x + cPad
-    const cw = iw - cPad * 2
+      doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
+        .text('MADAVISION', x + 10, y + BADGE_H - 18, { width: BADGE_W - 20, align: 'center' })
 
-    doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(16)
-      .text('INVITATION', cx, y + 24, { width: cw, align: 'center' })
+      col++
+      if (col >= COLS) { col = 0; y += BADGE_H + ROW_GAP }
+    }
 
-    doc.moveTo(cx + 40, y + 42).lineTo(cx + cw - 40, y + 42)
-      .strokeColor('#1B2A4A').lineWidth(0.4).stroke()
+    const drawInvitation = (idx) => {
+      if (col !== 0) { col = 0; y += BADGE_H + ROW_GAP }
+      checkPage(INV_H + 18)
+      const x = PAD
+      const iw = W - PAD * 2
 
-    doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(13)
-      .text(eventNom, cx, y + 52, { width: cw, align: 'center' })
-    doc.fillColor('#334155').font('Poppins-Regular').fontSize(10)
-      .text(socNom, cx, y + 70, { width: cw, align: 'center' })
-    doc.fillColor('#64748b').font('Poppins-Regular').fontSize(9)
-      .text(datePlace || 'Événement Madavision', cx, y + 88, { width: cw, align: 'center' })
-    doc.fillColor('#475569').font('Poppins-Regular').fontSize(9.5)
-      .text('Vous êtes invité à participer à cet événement.', cx, y + 106, { width: cw, align: 'center' })
+      doc.roundedRect(x, y, iw, INV_H, 6)
+        .strokeColor('#1B2A4A').lineWidth(0.8).stroke()
 
-    doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
-      .text(`Invitation n°${idx + 1}`, cx, y + INV_H - 22, { width: cw, align: 'right' })
+      const cPad = 26
+      const cx = x + cPad
+      const cw = iw - cPad * 2
 
-    y += INV_H + 18
-  }
+      doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(16)
+        .text('INVITATION', cx, y + 24, { width: cw, align: 'center' })
 
-  for (let i = 0; i < nbBadges; i++) drawBadge(i)
-  if (nbBadges > 0 && nbInv > 0) y += 24
-  for (let i = 0; i < nbInv; i++) drawInvitation(i)
+      doc.moveTo(cx + 40, y + 42).lineTo(cx + cw - 40, y + 42)
+        .strokeColor('#1B2A4A').lineWidth(0.4).stroke()
 
-  doc.end()
-  return { buffer: Buffer.concat(chunks), nbBadges, nbInvitations: nbInv }
+      doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(13)
+        .text(eventNom, cx, y + 52, { width: cw, align: 'center' })
+      doc.fillColor('#334155').font('Poppins-Regular').fontSize(10)
+        .text(socNom, cx, y + 70, { width: cw, align: 'center' })
+      doc.fillColor('#64748b').font('Poppins-Regular').fontSize(9)
+        .text(datePlace || 'Événement Madavision', cx, y + 88, { width: cw, align: 'center' })
+      doc.fillColor('#475569').font('Poppins-Regular').fontSize(9.5)
+        .text('Vous êtes invité à participer à cet événement.', cx, y + 106, { width: cw, align: 'center' })
+
+      doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
+        .text(`Invitation n°${idx + 1}`, cx, y + INV_H - 22, { width: cw, align: 'right' })
+
+      y += INV_H + 18
+    }
+
+    for (let i = 0; i < nbBadges; i++) drawBadge(i)
+    for (let i = 0; i < nbInv; i++) drawInvitation(i)
+
+    doc.end()
+  })
 }
 
 async function buildProformaContractAttachment(cmdId, options = {}) {
@@ -5943,7 +5985,7 @@ app.get('/api/commercial/dossier/:id', requireCommercial, async (req, res) => {
     const societeId = linkedRecordId(cf['Societé'] || cf['Société'])
     const societeMap = await getCommercialSocietes(req.commercialId)
     if (!societeId || !societeMap[societeId]) {
-      return res.status(403).json({ error: 'Ce dossier n’est pas assigné à ce commercial.' })
+      return res.status(403).json({ error: "Ce dossier n'est pas assigné à ce commercial." })
     }
 
     const socResp = await fetch(`${ATBASE}/${encodeURIComponent('Sociétés')}/${societeId}`, { headers: headers() })
@@ -6116,7 +6158,7 @@ app.post('/api/commercial/dossier/:id/paiement', requireCommercial, async (req, 
     const societeMap = await getCommercialSocietes(req.commercialId)
     const societe = societeId ? societeMap[societeId] : null
     if (!societeId || !societe) {
-      return res.status(403).json({ error: 'Ce dossier n’est pas assigné à ce commercial.' })
+      return res.status(403).json({ error: "Ce dossier n'est pas assigné à ce commercial." })
     }
 
     const montant = Number(data.montant)
@@ -6239,7 +6281,7 @@ app.post('/api/commercial/dossier/:id/payment-calendar', requireCommercial, asyn
     const societeId = linkedRecordId(cf['Societé'] || cf['Société'])
     const societeMap = await getCommercialSocietes(req.commercialId)
     if (!societeId || !societeMap[societeId]) {
-      return res.status(403).json({ error: 'Ce dossier n’est pas assigné à ce commercial.' })
+      return res.status(403).json({ error: "Ce dossier n'est pas assigné à ce commercial." })
     }
 
     const updated = await patchCommandeFields(cmdId, fields)
@@ -6253,6 +6295,62 @@ app.post('/api/commercial/dossier/:id/payment-calendar', requireCommercial, asyn
 // GET /api/commercial/dossier/:id/download-invoice — facture PDF limitée au commercial assigné
 app.get('/api/commercial/dossier/:id/download-invoice', requireCommercial, async (req, res) => {
   await sendInvoicePdf(req, res, { commercialId: req.commercialId })
+})
+
+// PATCH /api/commercial/dossier/:id/access-config — mise à jour badges + invitations (commercial)
+app.patch('/api/commercial/dossier/:id/access-config', requireCommercial, async (req, res) => {
+  try {
+    const cmdId = req.params.id
+    const { nbBadges, nbInvitations } = req.body || {}
+    if (nbBadges === undefined && nbInvitations === undefined) {
+      return res.status(400).json({ error: 'Aucun champ à mettre à jour.' })
+    }
+    // Vérifier que le dossier est bien assigné au commercial connecté
+    const cmdResp = await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmdId}`, { headers: headers() })
+    if (!cmdResp.ok) return res.status(404).json({ error: 'Commande introuvable' })
+    const cf = (await cmdResp.json()).fields || {}
+    const societeId = linkedRecordId(cf['Societé'] || cf['Société'])
+    const societeMap = await getCommercialSocietes(req.commercialId)
+    if (!societeId || !societeMap[societeId]) {
+      return res.status(403).json({ error: 'Ce dossier n\'est pas assigné à ce commercial.' })
+    }
+    const fields = {}
+    if (nbBadges !== undefined)      fields['Nombre badges']      = Math.max(0, Number(nbBadges) || 0)
+    if (nbInvitations !== undefined) fields['Nombre invitations']  = Math.max(0, Number(nbInvitations) || 0)
+    const atResp = await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmdId}`, {
+      method: 'PATCH', headers: headers(), body: JSON.stringify({ fields }),
+    })
+    if (!atResp.ok) {
+      const atErr = await atResp.json().catch(() => ({}))
+      return res.status(502).json({ error: `Airtable: ${atErr?.error?.message || 'champs introuvables — vérifiez que "Nombre badges" et "Nombre invitations" existent dans la table Commandes'}` })
+    }
+    res.json({ success: true, nbBadges: fields['Nombre badges'], nbInvitations: fields['Nombre invitations'] })
+  } catch(e) {
+    console.error('[commercial/access-config]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur mise à jour accès' })
+  }
+})
+
+// GET /api/commercial/dossier/:id/download-badges — génère PDF badges + invitations (commercial)
+app.get('/api/commercial/dossier/:id/download-badges', requireCommercial, async (req, res) => {
+  try {
+    const cmdId = req.params.id
+    const cmdCheck = await invoiceFetchRecord('Commandes', cmdId)
+    const cfCheck = cmdCheck?.fields || {}
+    const nbBadges = Number(cfCheck['Nombre badges']) || 0
+    const nbInvitations = Number(cfCheck['Nombre invitations']) || 0
+    if (nbBadges === 0 && nbInvitations === 0) {
+      return res.status(400).json({ error: 'Aucun badge ni invitation configuré pour ce dossier.' })
+    }
+    const result = await generateBadgesInvitationsPDF(cmdId, { commercialId: req.commercialId, nbBadges, nbInvitations })
+    const filename = `badges-invitations-${cmdId.slice(-8)}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(result.buffer)
+  } catch(e) {
+    console.error('[commercial/download-badges]', e.message)
+    res.status(400).json({ error: e.message })
+  }
 })
 
 // POST /api/commercial/dossier/:id/email-invoice — envoyé par email au client exposant
@@ -6353,7 +6451,7 @@ app.post('/api/commercial/cancel-request/:id', requireCommercial, async (req, re
     const id = req.params.id
     const { raison } = req.body || {}
     if (!raison || !String(raison).trim()) {
-      return res.status(400).json({ error: 'Motif d’annulation requis' })
+      return res.status(400).json({ error: "Motif d'annulation requis" })
     }
 
     const cmdResp = await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${id}`, { headers: headers() })
@@ -6363,7 +6461,7 @@ app.post('/api/commercial/cancel-request/:id', requireCommercial, async (req, re
     const societeId = linkedRecordId(cf['Societé'] || cf['Société'])
     const societeMap = await getCommercialSocietes(req.commercialId)
     if (!societeId || !societeMap[societeId]) {
-      return res.status(403).json({ error: 'Ce dossier n’est pas assigné à ce commercial.' })
+      return res.status(403).json({ error: "Ce dossier n'est pas assigné à ce commercial." })
     }
 
     const societe = societeMap[societeId]
@@ -6372,7 +6470,7 @@ app.post('/api/commercial/cancel-request/:id', requireCommercial, async (req, re
 
     const result = await mailer(
       EMAIL_CONFIG.fromAddress,
-      `Demande d’annulation dossier — ${societe.nom}`,
+      `Demande d'annulation dossier — ${societe.nom}`,
       emailWrapper(`
         <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Demande d'annulation de commande</h2>
         <p>Une demande d'annulation a été envoyée depuis l'espace commercial.</p>
@@ -7071,6 +7169,53 @@ app.get('/api/sonia/dossier/:id/download-invoice', requireSonia, async (req, res
   await sendInvoicePdf(req, res)
 })
 
+// PATCH /api/sonia/dossier/:id/access-config — mise à jour badges + invitations (admin)
+app.patch('/api/sonia/dossier/:id/access-config', requireSonia, async (req, res) => {
+  try {
+    const cmdId = req.params.id
+    const { nbBadges, nbInvitations } = req.body || {}
+    if (nbBadges === undefined && nbInvitations === undefined) {
+      return res.status(400).json({ error: 'Aucun champ à mettre à jour.' })
+    }
+    const fields = {}
+    if (nbBadges !== undefined)      fields['Nombre badges']      = Math.max(0, Number(nbBadges) || 0)
+    if (nbInvitations !== undefined) fields['Nombre invitations']  = Math.max(0, Number(nbInvitations) || 0)
+    const atResp = await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${cmdId}`, {
+      method: 'PATCH', headers: headers(), body: JSON.stringify({ fields }),
+    })
+    if (!atResp.ok) {
+      const atErr = await atResp.json().catch(() => ({}))
+      return res.status(502).json({ error: `Airtable: ${atErr?.error?.message || 'champs introuvables — vérifiez que "Nombre badges" et "Nombre invitations" existent dans la table Commandes'}` })
+    }
+    res.json({ success: true, nbBadges: fields['Nombre badges'], nbInvitations: fields['Nombre invitations'] })
+  } catch(e) {
+    console.error('[sonia/access-config]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur mise à jour accès' })
+  }
+})
+
+// GET /api/sonia/dossier/:id/download-badges — génère le PDF badges + invitations (admin)
+app.get('/api/sonia/dossier/:id/download-badges', requireSonia, async (req, res) => {
+  try {
+    const cmdId = req.params.id
+    const cmdCheck = await invoiceFetchRecord('Commandes', cmdId)
+    const cfCheck = cmdCheck?.fields || {}
+    const nbBadges = Number(cfCheck['Nombre badges']) || 0
+    const nbInvitations = Number(cfCheck['Nombre invitations']) || 0
+    if (nbBadges === 0 && nbInvitations === 0) {
+      return res.status(400).json({ error: 'Aucun badge ni invitation configuré pour ce dossier.' })
+    }
+    const result = await generateBadgesInvitationsPDF(cmdId, { nbBadges, nbInvitations })
+    const filename = `badges-invitations-${cmdId.slice(-8)}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+    res.send(result.buffer)
+  } catch(e) {
+    console.error('[sonia/download-badges]', e.message)
+    res.status(400).json({ error: e.message })
+  }
+})
+
 // POST /api/sonia/dossier/:id/email-invoice — envoyé par email au client exposant (admin)
 app.post('/api/sonia/dossier/:id/email-invoice', requireSonia, async (req, res) => {
   try {
@@ -7169,7 +7314,7 @@ app.post('/api/sonia/cancel-request/:id', requireSonia, async (req, res) => {
     const id = req.params.id
     const { raison } = req.body || {}
     if (!raison || !String(raison).trim()) {
-      return res.status(400).json({ error: 'Motif d’annulation requis' })
+      return res.status(400).json({ error: "Motif d'annulation requis" })
     }
 
     const cmdRes = await fetch(`${ATBASE}/${encodeURIComponent('Commandes')}/${id}`, { headers: headers() })
@@ -7200,7 +7345,7 @@ app.post('/api/sonia/cancel-request/:id', requireSonia, async (req, res) => {
 
     const result = await mailer(
       EMAIL_CONFIG.fromAddress,
-      `Demande d’annulation dossier — ${socNom}`,
+      `Demande d'annulation dossier — ${socNom}`,
       emailWrapper(`
         <h2 style="color:#1B2A4A;font-size:18px;margin:0 0 14px">Demande d'annulation de commande</h2>
         <p>Une demande d'annulation a été envoyée depuis l'espace commercial.</p>
