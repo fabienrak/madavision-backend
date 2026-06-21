@@ -11,6 +11,7 @@ const fs         = require('fs')
 const path       = require('path')
 const crypto     = require('crypto')
 const cloudinary = require('cloudinary').v2
+const QRCode     = require('qrcode')
 require('dotenv').config()
 
 cloudinary.config({
@@ -5509,111 +5510,110 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
   const nbInv    = options.nbInvitations !== undefined ? Number(options.nbInvitations) : (Number(data.access?.invitations) || 0)
   if (nbBadges === 0 && nbInv === 0) throw new Error('Aucun badge ni invitation à générer.')
 
-  const socNom   = data.societe?.nom || 'Exposant'
-  const eventNom = [data.evenement?.nom, data.edition?.nom].filter(Boolean).join(' — ') || 'Événement Madavision'
-  const contact  = data.societe?.contact || ''
-  const datePlace = [data.edition?.dateDebut, data.edition?.lieu || data.evenement?.lieu].filter(Boolean).join(' · ') || ''
+  const socNom  = (data.societe?.nom || 'Exposant').toUpperCase()
+  const shortId = cmdId.slice(-8).toUpperCase()
 
-  let logoBuf = null
-  if (data.societe?.logoUrl) {
-    try { logoBuf = await fetchImageBuffer(data.societe.logoUrl) } catch (_) {}
-  }
+  // Chemins des templates
+  const BADGE_TPL = path.join(__dirname, 'assets', 'pdf', 'badge-exposant.png')
+  const INV_TPL   = path.join(__dirname, 'assets', 'pdf', 'invitation.png')
+
+  // Dimensions originales des templates (px)
+  const BADGE_OW = 1360, BADGE_OH = 1726
+  const INV_OW   = 2466, INV_OH   = 1168
+
+  // Pré-génération des QR codes (async avant la Promise PDFKit)
+  const toQR = (txt) => QRCode.toBuffer(txt, { type: 'png', width: 600, margin: 1 })
+
+  const [badgeQRs, invQRs] = await Promise.all([
+    Promise.all(Array.from({ length: nbBadges }, (_, i) => toQR(`BADGE-${shortId}-${i + 1}`))),
+    Promise.all(Array.from({ length: nbInv },    (_, i) => toQR(`INV-${shortId}-${i + 1}`))),
+  ])
 
   return new Promise((resolve, reject) => {
-    const W = 595.28
-    const PAD = 42
-    const COLS = 2
-    const BADGE_W = (W - PAD * 2 - 18) / COLS
-    const BADGE_H = 158
-    const BADGE_GAP = 18
-    const ROW_GAP = 14
-    const INV_H = 170
-
-    const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margins: { top: 0, bottom: 0, left: 0, right: 0 } })
+    const doc = new PDFDocument({ autoFirstPage: false, margins: { top: 0, bottom: 0, left: 0, right: 0 } })
     const chunks = []
     doc.on('data', c => chunks.push(c))
     doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), nbBadges, nbInvitations: nbInv }))
     doc.on('error', reject)
 
-    doc.registerFont('Poppins-Bold', path.join(FONT_DIR, 'Poppins-Bold.ttf'))
+    doc.registerFont('Poppins-Bold',    path.join(FONT_DIR, 'Poppins-Bold.ttf'))
     doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
 
-    let y = PAD
-    let col = 0
+    // ── BADGES : 3 colonnes × 2 lignes = 6 par page (A4 portrait) ─────────
+    // Zones superposées (% des dims du template 1360×1726) :
+    //   Nom société : x=6.6%  y=35%   largeur=72%
+    //   QR code     : x=6.6%  y=38.5% taille=56.5% (carré)
+    //   Numéro      : centré   y=97.3%
+    {
+      const B_COLS = 3, B_ROWS = 2, B_PER_PAGE = B_COLS * B_ROWS
+      const B_MX = 10, B_MY = 15, B_GX = 8, B_GY = 10
+      // badge width = (595 - 2*10 - 2*8) / 3 = 186pt  →  height = 186 * 1726/1360 = 236pt
+      const bW = Math.floor((595 - 2*B_MX - (B_COLS - 1)*B_GX) / B_COLS)
+      const bH = Math.round(bW * BADGE_OH / BADGE_OW)
 
-    const checkPage = (needed) => {
-      if (y + needed > 780) { doc.addPage(); y = PAD; col = 0 }
-    }
+      for (let i = 0; i < nbBadges; i++) {
+        if (i % B_PER_PAGE === 0) doc.addPage({ size: 'A4', layout: 'portrait' })
+        const col = i % B_COLS
+        const row = Math.floor((i % B_PER_PAGE) / B_COLS)
+        const bx  = B_MX + col * (bW + B_GX)
+        const by  = B_MY + row * (bH + B_GY)
 
-    const drawBadge = (idx) => {
-      const x = PAD + col * (BADGE_W + BADGE_GAP)
-      checkPage(BADGE_H + ROW_GAP)
+        // Fond template
+        doc.image(BADGE_TPL, bx, by, { width: bW, height: bH })
 
-      doc.roundedRect(x, y, BADGE_W, BADGE_H, 6)
-        .strokeColor('#cbd5e1').lineWidth(0.6).stroke()
+        // Nom société
+        const nX = bx + Math.round(0.066 * bW)
+        const nY = by  + Math.round(0.350 * bH)
+        const nW = Math.round(0.720 * bW)
+        doc.font('Poppins-Bold').fontSize(5.5).fillColor('#0B1A3F')
+          .text(socNom, nX, nY, { width: nW, lineBreak: false })
 
-      doc.rect(x, y, BADGE_W, 26).fill('#1B2A4A')
-      doc.fillColor('#fff').font('Poppins-Bold').fontSize(7)
-        .text(eventNom, x + 8, y + 8, { width: BADGE_W - 16, align: 'center' })
+        // QR code
+        const qX = nX
+        const qY = by + Math.round(0.385 * bH)
+        const qS = Math.round(0.565 * bW)
+        doc.image(badgeQRs[i], qX, qY, { width: qS, height: qS })
 
-      const logoY = y + 34
-      if (logoBuf) {
-        try {
-          const size = 46
-          doc.image(logoBuf, x + BADGE_W / 2 - size / 2, logoY, { width: size, height: size })
-        } catch (_) {}
+        // Numéro badge
+        const numY = by + Math.round(0.973 * bH)
+        doc.font('Poppins-Regular').fontSize(4).fillColor('#334155')
+          .text(`${i + 1}-${shortId}`, bx, numY, { width: bW, align: 'center' })
       }
-
-      const textStart = logoBuf ? logoY + 50 : logoY + 4
-      doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(8.5)
-        .text(socNom, x + 10, textStart, { width: BADGE_W - 20, align: 'center' })
-
-      doc.fillColor('#475569').font('Poppins-Regular').fontSize(7.5)
-        .text(contact || `Participant ${idx + 1}`, x + 10, textStart + 16, { width: BADGE_W - 20, align: 'center' })
-
-      doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
-        .text('MADAVISION', x + 10, y + BADGE_H - 18, { width: BADGE_W - 20, align: 'center' })
-
-      col++
-      if (col >= COLS) { col = 0; y += BADGE_H + ROW_GAP }
     }
 
-    const drawInvitation = (idx) => {
-      if (col !== 0) { col = 0; y += BADGE_H + ROW_GAP }
-      checkPage(INV_H + 18)
-      const x = PAD
-      const iw = W - PAD * 2
+    // ── INVITATIONS : 1 colonne × 3 lignes = 3 par page (A4 portrait) ──────
+    // Template 2466×1168 → mis à l'échelle sur la largeur utile (575pt)
+    // Zone QR (droite) : x=72.7%  y=9%  taille=17.5% (carré)
+    // Numéro           : sous le QR
+    {
+      const I_PER_PAGE = 3
+      const I_MX = 10, I_MY = 5, I_GY = 4
+      // inv width = 595 - 2*10 = 575pt  →  height = 575 * 1168/2466 = 272pt
+      // 3 lignes : 3*272 + 2*4 + 2*5 = 834pt < 842pt ✓
+      const iW = 595 - 2 * I_MX
+      const iH = Math.round(iW * INV_OH / INV_OW)
 
-      doc.roundedRect(x, y, iw, INV_H, 6)
-        .strokeColor('#1B2A4A').lineWidth(0.8).stroke()
+      for (let i = 0; i < nbInv; i++) {
+        if (i % I_PER_PAGE === 0) doc.addPage({ size: 'A4', layout: 'portrait' })
+        const row = i % I_PER_PAGE
+        const ix  = I_MX
+        const iy  = I_MY + row * (iH + I_GY)
 
-      const cPad = 26
-      const cx = x + cPad
-      const cw = iw - cPad * 2
+        // Fond template
+        doc.image(INV_TPL, ix, iy, { width: iW, height: iH })
 
-      doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(16)
-        .text('INVITATION', cx, y + 24, { width: cw, align: 'center' })
+        // QR code (zone « ENTRÉE UNIQUE » côté droit)
+        const qX = ix + Math.round(0.727 * iW)
+        const qY = iy  + Math.round(0.090 * iH)
+        const qS = Math.round(0.175 * iW)
+        doc.image(invQRs[i], qX, qY, { width: qS, height: qS })
 
-      doc.moveTo(cx + 40, y + 42).lineTo(cx + cw - 40, y + 42)
-        .strokeColor('#1B2A4A').lineWidth(0.4).stroke()
-
-      doc.fillColor('#1B2A4A').font('Poppins-Bold').fontSize(13)
-        .text(eventNom, cx, y + 52, { width: cw, align: 'center' })
-      doc.fillColor('#334155').font('Poppins-Regular').fontSize(10)
-        .text(socNom, cx, y + 70, { width: cw, align: 'center' })
-      doc.fillColor('#64748b').font('Poppins-Regular').fontSize(9)
-        .text(datePlace || 'Événement Madavision', cx, y + 88, { width: cw, align: 'center' })
-      doc.fillColor('#475569').font('Poppins-Regular').fontSize(9.5)
-        .text('Vous êtes invité à participer à cet événement.', cx, y + 106, { width: cw, align: 'center' })
-
-      doc.fillColor('#94a3b8').font('Poppins-Regular').fontSize(6.5)
-        .text(`Invitation n°${idx + 1}`, cx, y + INV_H - 22, { width: cw, align: 'right' })
-
-      y += INV_H + 18
+        // Numéro invitation
+        const numY = qY + qS + 3
+        doc.font('Poppins-Regular').fontSize(4).fillColor('#1B2A4A')
+          .text(`${i + 1}-${shortId}`, qX, numY, { width: qS + 50, align: 'center' })
+      }
     }
-
-    for (let i = 0; i < nbBadges; i++) drawBadge(i)
-    for (let i = 0; i < nbInv; i++) drawInvitation(i)
 
     doc.end()
   })
