@@ -28,7 +28,7 @@ function fmtMoney(value) {
   const n = Math.round(Number(value || 0))
   return n.toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\s/g, '.') + ' Ar'
 }
-const FONT_DIR = '/Users/mac/Desktop/my_project/MADAVISION/madavision-react/assets/fonts/'
+const FONT_DIR = path.join(__dirname, 'assets', 'fonts')
 
 function fmtMoneyRaw(value) {
   const n = Math.round(Number(value || 0))
