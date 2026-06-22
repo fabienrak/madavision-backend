@@ -5540,16 +5540,18 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
     doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
 
     // ── BADGES : 3 colonnes × 2 lignes = 6 par page (A4 portrait) ─────────
-    // Zones superposées (% des dims du template 1360×1726) :
-    //   Nom société : x=6.6%  y=35%   largeur=72%
-    //   QR code     : x=6.6%  y=38.5% taille=56.5% (carré)
-    //   Numéro      : centré   y=97.3%
+    // Zone blanche template (1360×1726) : x=4%→66%  y=21%→84%
     {
       const B_COLS = 3, B_ROWS = 2, B_PER_PAGE = B_COLS * B_ROWS
       const B_MX = 10, B_MY = 15, B_GX = 8, B_GY = 10
-      // badge width = (595 - 2*10 - 2*8) / 3 = 186pt  →  height = 186 * 1726/1360 = 236pt
       const bW = Math.floor((595 - 2*B_MX - (B_COLS - 1)*B_GX) / B_COLS)
       const bH = Math.round(bW * BADGE_OH / BADGE_OW)
+
+      // Zone blanche en pt
+      const WX_OFF = Math.round(0.04  * bW)   // bord gauche zone blanche
+      const WY_OFF = Math.round(0.21  * bH)   // bord haut zone blanche
+      const WW     = Math.round(0.62  * bW)   // largeur zone blanche
+      const PAD    = 5
 
       for (let i = 0; i < nbBadges; i++) {
         if (i % B_PER_PAGE === 0) doc.addPage({ size: 'A4', layout: 'portrait' })
@@ -5558,25 +5560,24 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
         const bx  = B_MX + col * (bW + B_GX)
         const by  = B_MY + row * (bH + B_GY)
 
-        // Fond template
         doc.image(BADGE_TPL, bx, by, { width: bW, height: bH })
 
-        // Nom société
-        const nX = bx + Math.round(0.066 * bW)
-        const nY = by  + Math.round(0.350 * bH)
-        const nW = Math.round(0.720 * bW)
-        doc.font('Poppins-Bold').fontSize(5.5).fillColor('#0B1A3F')
-          .text(socNom, nX, nY, { width: nW, lineBreak: false })
+        // Nom société — dans la zone blanche, en haut
+        const nX = bx + WX_OFF + PAD
+        const nY = by + WY_OFF + PAD
+        const nW = WW - 2 * PAD
+        doc.font('Poppins-Bold').fontSize(5).fillColor('#0B1A3F')
+          .text(socNom, nX, nY, { width: nW, align: 'center', lineBreak: true })
 
-        // QR code
-        const qX = nX
-        const qY = by + Math.round(0.385 * bH)
-        const qS = Math.round(0.565 * bW)
+        // QR code — centré horizontalement dans la zone blanche, sous le nom
+        const qS = Math.round(0.50 * bW)
+        const qX = bx + WX_OFF + Math.round((WW - qS) / 2)
+        const qY = nY + 14
         doc.image(badgeQRs[i], qX, qY, { width: qS, height: qS })
 
-        // Numéro badge
-        const numY = by + Math.round(0.973 * bH)
-        doc.font('Poppins-Regular').fontSize(4).fillColor('#334155')
+        // Numéro badge — bas du badge, texte blanc sur fond bleu
+        const numY = by + Math.round(0.925 * bH)
+        doc.font('Poppins-Regular').fontSize(4).fillColor('#ffffff')
           .text(`${i + 1}-${shortId}`, bx, numY, { width: bW, align: 'center' })
       }
     }
