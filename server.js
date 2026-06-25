@@ -5518,7 +5518,7 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
   const INV_TPL   = path.join(__dirname, 'assets', 'pdf', 'invitation.png')
 
   // Dimensions originales des templates (px)
-  const BADGE_OW = 1360, BADGE_OH = 1726
+  const BADGE_OW = 1500, BADGE_OH = 2100
   const INV_OW   = 2466, INV_OH   = 1168
 
   // Pré-génération des QR codes (async avant la Promise PDFKit)
@@ -5540,17 +5540,18 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
     doc.registerFont('Poppins-Regular', path.join(FONT_DIR, 'Poppins-Regular.ttf'))
 
     // ── BADGES : 3 colonnes × 2 lignes = 6 par page (A4 portrait) ─────────
-    // Zone blanche template (1360×1726) : x=4%→66%  y=21%→84%
+    // Zone blanche template (1500×2100) : x=6.7%→64.2%  y=32.9%→98%
     {
       const B_COLS = 3, B_ROWS = 2, B_PER_PAGE = B_COLS * B_ROWS
       const B_MX = 10, B_MY = 15, B_GX = 8, B_GY = 10
       const bW = Math.floor((595 - 2*B_MX - (B_COLS - 1)*B_GX) / B_COLS)
       const bH = Math.round(bW * BADGE_OH / BADGE_OW)
 
-      // Zone blanche en pt
-      const WX_OFF = Math.round(0.04  * bW)   // bord gauche zone blanche
-      const WY_OFF = Math.round(0.21  * bH)   // bord haut zone blanche
-      const WW     = Math.round(0.62  * bW)   // largeur zone blanche
+      // Zone blanche en pt (mesurée sur le template 1500×2100)
+      const WX_OFF = Math.round(0.067 * bW)   // bord gauche zone blanche  6.7%
+      const WY_OFF = Math.round(0.329 * bH)   // bord haut zone blanche   32.9%
+      const WW     = Math.round(0.575 * bW)   // largeur zone blanche     57.5%
+      const WH     = Math.round(0.651 * bH)   // hauteur zone blanche     65.1%
       const PAD    = 5
 
       for (let i = 0; i < nbBadges; i++) {
@@ -5566,19 +5567,19 @@ async function generateBadgesInvitationsPDF(cmdId, options = {}) {
         const nX = bx + WX_OFF + PAD
         const nY = by + WY_OFF + PAD
         const nW = WW - 2 * PAD
-        doc.font('Poppins-Bold').fontSize(5).fillColor('#0B1A3F')
+        doc.font('Poppins-Bold').fontSize(7).fillColor('#0B1A3F')
           .text(socNom, nX, nY, { width: nW, align: 'center', lineBreak: true })
 
-        // QR code — centré horizontalement dans la zone blanche, sous le nom
-        const qS = Math.round(0.50 * bW)
+        // QR code — centré dans la zone blanche, sous le nom
+        const qS = Math.round(0.80 * WW)
         const qX = bx + WX_OFF + Math.round((WW - qS) / 2)
-        const qY = nY + 14
+        const qY = nY + 20
         doc.image(badgeQRs[i], qX, qY, { width: qS, height: qS })
 
-        // Numéro badge — bas du badge, texte blanc sur fond bleu
-        const numY = by + Math.round(0.925 * bH)
-        doc.font('Poppins-Regular').fontSize(4).fillColor('#ffffff')
-          .text(`${i + 1}-${shortId}`, bx, numY, { width: bW, align: 'center' })
+        // Numéro badge — bas de la zone blanche, texte sombre
+        const numY = by + WY_OFF + WH - 10
+        doc.font('Poppins-Regular').fontSize(4).fillColor('#1B2A4A')
+          .text(`${i + 1}-${shortId}`, bx + WX_OFF, numY, { width: WW, align: 'center' })
       }
     }
 
