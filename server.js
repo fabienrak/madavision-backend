@@ -6626,6 +6626,42 @@ app.post('/api/sonia/accounts', requireSonia, async (req, res) => {
   }
 })
 
+// PATCH /api/sonia/accounts/:id — modifier actif / réinitialiser mot de passe
+app.patch('/api/sonia/accounts/:id', requireSonia, async (req, res) => {
+  try {
+    const { id } = req.params
+    const updates = {}
+
+    if (req.body.active !== undefined) updates.active = Boolean(req.body.active)
+    if (req.body.password) {
+      const pw  = String(req.body.password)
+      const cpw = String(req.body.confirmPassword || '')
+      if (pw !== cpw) return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' })
+      const policyError = passwordPolicyError(pw)
+      if (policyError) return res.status(400).json({ error: policyError })
+      updates.passwordHash = hashPassword(pw)
+    }
+    if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Aucune modification fournie.' })
+
+    const records = await authUsers({ refresh: true })
+    const record  = records.find(r => r.id === id)
+    if (!record) return res.status(404).json({ error: 'Compte introuvable.' })
+
+    const user = normalizeAuthUser(record)
+    await patchAuthUser(user, updates)
+
+    res.json({
+      success:     true,
+      id,
+      active:      updates.active !== undefined ? updates.active : user.active,
+      hasPassword: updates.passwordHash ? true : !!user.passwordHash,
+    })
+  } catch (e) {
+    console.error('[sonia/accounts:update]', e.message)
+    res.status(500).json({ error: DEBUG ? e.message : 'Erreur de mise à jour du compte' })
+  }
+})
+
 // GET /api/sonia/dossiers — liste commandes classées par Validation
 app.get('/api/sonia/dossiers', requireSonia, async (req, res) => {
   try {
