@@ -419,6 +419,10 @@ app.use(cors({
     if (ALLOWED.includes('*') || origin.includes('localhost')) return cb(null, true)
     // Domaine listé
     if (ALLOWED.includes(origin)) return cb(null, true)
+    // Wildcards ex: ".madavision.mg" autorise tous les sous-domaines + le domaine racine
+    const hostname = (() => { try { return new URL(origin).hostname } catch { return '' } })()
+    const suffixMatch = ALLOWED.some(a => a.startsWith('.') && (hostname === a.slice(1) || hostname.endsWith(a)))
+    if (suffixMatch) return cb(null, true)
     return cb(new Error(`Origine non autorisée : ${origin}`))
   },
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
