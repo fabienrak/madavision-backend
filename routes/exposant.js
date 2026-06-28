@@ -54,15 +54,34 @@ router.get('/espace-client', requireExposant, async (req, res) => {
           if (!cResp.ok) continue
           const cf = (await cResp.json()).fields || {}
 
-          // ── Édition ── (table Salons, champ "Edition")
-          const edId = (cf['Édition'] || cf['Edition'] || [])[0]
-          let edition = { nom: '', id: edId }
-          if (edId) {
+          // ── Salon + Édition ──
+          // "Edition" et "Nom du salon (from Salons)" sont des champs de recherche (lookup) :
+          // ils retournent des tableaux de strings, pas des record IDs.
+          const _edLookup = cf['Edition'] || cf['Édition']
+          const editionStr = (() => {
+            const v = Array.isArray(_edLookup) ? _edLookup[0] : _edLookup
+            return typeof v === 'string' && !v.startsWith('rec') ? v : ''
+          })()
+          const _nomSalonLookup = cf['Nom du salon (from Salons)']
+          const nomSalonStr = Array.isArray(_nomSalonLookup) ? (_nomSalonLookup[0] || '') : String(_nomSalonLookup || '')
+
+          // ID du record Salons lié (seulement si c'est un vrai recXXX)
+          const edId = (() => {
+            for (const field of ['Salons', 'Salon', 'Édition', 'Edition']) {
+              const v = cf[field]
+              if (Array.isArray(v) && v.length > 0 && String(v[0]).startsWith('rec')) return v[0]
+            }
+            return null
+          })()
+
+          let edition = { nom: editionStr || nomSalonStr, salonNom: nomSalonStr, id: edId || '' }
+          if (edId && !edition.nom) {
             try {
               const er = await fetch(`${ATBASE}/${encodeURIComponent('Salons')}/${edId}`, { headers: headers() })
               if (er.ok) {
                 const ef = (await er.json()).fields
-                edition.nom = ef['Edition'] || ef['Édition'] || ef['Nom édition'] || ef['Nom du salon'] || ef['Nom'] || ''
+                edition.nom     = ef['Edition'] || ef['Édition'] || ef['Nom édition'] || ef['Nom du salon'] || ef['Nom'] || ''
+                edition.salonNom = ef['Nom du salon'] || ef['Nom'] || nomSalonStr
               }
             } catch {}
           }
@@ -87,6 +106,7 @@ router.get('/espace-client', requireExposant, async (req, res) => {
             participationId:  cmdId,
             numeroDossier:    cf['Numero de dossier'] || cf['ID Commande'] || cmdId.slice(-6).toUpperCase(),
             edition:          edition.nom,
+            salonNom:         edition.salonNom,
             dateInscription:  cf['Date commande'] || '',
             statutDossier:    cf['Statut commande'] || 'Inscrit',
             statutExposant:   'Exposant',
@@ -142,8 +162,23 @@ router.get('/exposant/:token', async (req, res) => {
     const sf = socRecords[0]?.fields || {}
 
     // 3. Salon / Édition lié (via la commande ou via le stand)
-    const firstLinkedId = value => Array.isArray(value) ? value[0] : value
-    let salonOrEditionId = firstLinkedId(cf['Édition'] || cf['Edition'] || cf['Salons'] || cf['Salon'])
+    // "Edition" et "Nom du salon (from Salons)" sont des champs lookup (strings, pas record IDs)
+    const _edLookupMain = cf['Edition'] || cf['Édition']
+    const editionStrMain = (() => {
+      const v = Array.isArray(_edLookupMain) ? _edLookupMain[0] : _edLookupMain
+      return typeof v === 'string' && !v.startsWith('rec') ? v : ''
+    })()
+    const _nomSalonLookupMain = cf['Nom du salon (from Salons)']
+    const nomSalonStrMain = Array.isArray(_nomSalonLookupMain) ? (_nomSalonLookupMain[0] || '') : String(_nomSalonLookupMain || '')
+
+    // Seulement les vrais record IDs Airtable (commencent par "rec")
+    const firstRecordId = value => {
+      const v = Array.isArray(value) ? value[0] : value
+      return typeof v === 'string' && v.startsWith('rec') ? v : null
+    }
+    let salonOrEditionId = firstRecordId(cf['Salons']) || firstRecordId(cf['Salon']) ||
+                           firstRecordId(cf['Édition']) || firstRecordId(cf['Edition'])
+
     const standIds = Array.isArray(cf['Stand ou service commandé']) ? cf['Stand ou service commandé'] : []
     if (!salonOrEditionId) {
       for (const sid of standIds) {
@@ -151,13 +186,10 @@ router.get('/exposant/:token', async (req, res) => {
           const sRes = await fetch(`${ATBASE}/${encodeURIComponent('Stands')}/${sid}`, { headers: headers() })
           if (sRes.ok) {
             const sData = await sRes.json()
-            const lid = firstLinkedId(
-              sData.fields?.['Édition'] ||
-              sData.fields?.['Edition'] ||
-              sData.fields?.['Éditions'] ||
-              sData.fields?.['Editions'] ||
-              sData.fields?.['Salon'] ||
-              sData.fields?.['Salons']
+            const lid = firstRecordId(
+              sData.fields?.['Salons'] || sData.fields?.['Salon'] ||
+              sData.fields?.['Édition'] || sData.fields?.['Edition'] ||
+              sData.fields?.['Éditions'] || sData.fields?.['Editions']
             )
             if (lid) { salonOrEditionId = lid; break }
           }
@@ -173,9 +205,12 @@ router.get('/exposant/:token', async (req, res) => {
       if (edRes.ok) {
         const edData = await edRes.json()
         const ef = edData.fields || {}
+        const edNom     = ef['Edition'] || ef['Édition'] || ef['Nom édition'] || ef['Nom du salon'] || ef['Nom'] || ''
+        const edSalonNom = ef['Nom du salon'] || ef['Nom'] || ef['Salon'] || nomSalonStrMain || ''
         edition = {
           id:        edData.id,
-          nom:       ef['Edition'] || ef['Édition'] || ef['Nom édition'] || ef['Nom du salon'] || edData.id,
+          nom:       edNom || editionStrMain || nomSalonStrMain || edData.id,
+          salonNom:  edSalonNom,
           evenement: ef['Événement'] || ef['Evenement'] || ef['Salon'] || ef['Nom du salon'] || '',
           dateDebut: ef['Date début'] || ef['Date de début'] || '',
           dateFin:   ef['Date fin'] || ef['Date de fin'] || '',
@@ -183,6 +218,14 @@ router.get('/exposant/:token', async (req, res) => {
           salonId:   edData.id,
           salonIds:  [edData.id],
         }
+      }
+    }
+    // Fallback : construire depuis les champs lookup si le record Salons est inaccessible
+    if (!edition && (nomSalonStrMain || editionStrMain)) {
+      edition = {
+        id: '', nom: editionStrMain || nomSalonStrMain, salonNom: nomSalonStrMain,
+        evenement: nomSalonStrMain, dateDebut: '', dateFin: '', lieu: '',
+        salonId: '', salonIds: [],
       }
     }
 
